@@ -1,0 +1,150 @@
+:root {
+  --panel: rgba(28, 30, 36, 0.96);
+  --text: #e8e8ea;
+  --muted: #9aa0ab;
+  --border: rgba(255, 255, 255, 0.12);
+  --hover: rgba(126, 200, 255, 0.14);
+  --accent: #7ec8ff;
+  --btn-bg: #2a2c33;
+  --btn-border: #3a3d46;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --panel: rgba(255, 255, 255, 0.97);
+    --text: #24262b;
+    --muted: #6b7280;
+    --border: rgba(0, 0, 0, 0.12);
+    --hover: rgba(90, 155, 224, 0.12);
+    --accent: #2d6fb8;
+    --btn-bg: #f0f1f5;
+    --btn-border: #d9dce1;
+  }
+}
+
+body {
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: "Microsoft YaHei UI", sans-serif;
+  user-select: none;
+  overflow: hidden;
+}
+
+/* width:max-content：面板宽度=真实内容宽。以前是普通块级元素、宽度恒等于窗口宽
+   （初始 250px），窗口只有高度随内容自适应、宽度从不跟字号变——20px 档长标签被
+   body 的 overflow:hidden 裁掉（渲染端上报的 offsetWidth 因此也是假的）。
+   不设 max-width：它以当前窗口宽为基准会形成「量不了就不长」的死循环，超宽防护
+   由主进程 menu:resize 的 440px 上限负责 */
+.panel {
+  width: max-content;
+  margin: 6px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  box-sizing: border-box;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.item:hover {
+  background: var(--hover);
+}
+
+.item .mark {
+  width: 1em; /* 随字号缩放：固定 16px 在 20px 字号下装不下 ✓ 字形 */
+  text-align: center;
+  color: var(--accent);
+  flex: none;
+}
+
+.item .arrow {
+  margin-left: auto;
+  opacity: 0.5;
+  flex: none;
+  /* 复合行（开机自启）的箭头是独立热点（行体=开关、箭头=进子菜单），加宽命中区防误触 */
+  padding: 0 2px 0 14px;
+  cursor: pointer;
+}
+
+.item .arrow:hover {
+  opacity: 1;
+}
+
+.sep {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--border);
+}
+
+.level-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px 8px;
+  color: var(--muted);
+}
+
+.level-bar button {
+  padding: 2px 10px;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  font-size: inherit;
+  cursor: pointer;
+}
+
+.font-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 10px 2px;
+  border-top: 1px solid var(--border);
+}
+
+.font-label {
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.font-row button {
+  padding: 3px 9px;
+  background: var(--btn-bg);
+  color: var(--text);
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  font-size: 0.9em;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.font-row button:hover:not(:disabled) {
+  background: var(--card-hover, #34363e);
+}
+
+.font-row button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#font-value {
+  min-width: 4ch;
+  text-align: center;
+  color: var(--accent);
+  font-size: 0.9em;
+}
+
+.hidden {
+  display: none !important;
+}

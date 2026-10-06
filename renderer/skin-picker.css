@@ -1,0 +1,172 @@
+:root {
+  --bg: #1e1f24;
+  --text: #e8e8ea;
+  --muted: #9aa0ab;
+  --card: #2a2c33;
+  --border: #3a3d46;
+  --accent: #7ec8ff;
+  --accent-warm: #ffd76e;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f3f4f7;
+    --text: #24262b;
+    --muted: #6b7280;
+    --card: #ffffff;
+    --border: #d9dce1;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 14px 18px;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei UI", sans-serif;
+  user-select: none;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 6px;
+  color: var(--accent-warm);
+}
+
+h2 {
+  font-size: 13px;
+  margin: 14px 0 8px;
+  color: var(--muted);
+  font-weight: normal;
+}
+
+.hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.states {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 5px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.chip .assigned {
+  color: #8fd48f;
+  margin-left: 4px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 88px);
+  gap: 8px;
+  max-height: 330px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.grid img {
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  background: var(--card);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.grid img:hover {
+  border-color: var(--muted);
+}
+
+.grid img.assigned {
+  border-color: #8fd48f;
+}
+
+/* emoji 皮肤模式的字符网格 */
+.grid .emo {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Segoe UI Emoji", "Microsoft YaHei UI", sans-serif;
+  font-size: 30px;
+  line-height: 1;
+  background: var(--card);
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.grid .emo:hover {
+  border-color: var(--muted);
+}
+
+.grid .emo.assigned {
+  border-color: #8fd48f;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.actions .spacer {
+  flex: 1;
+}
+
+button {
+  padding: 7px 14px;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--muted);
+}
+
+button.primary {
+  background: #2d5d8a;
+  border-color: #3a7ab5;
+  color: #ffffff;
+}
+
+button.primary:hover {
+  background: #356da1;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.warn {
+  color: var(--pink, #ff9e9e);
+  font-size: 12px;
+  margin: 8px 0 0;
+}

@@ -1,0 +1,28 @@
+*.log
+.DS_Store
+.mimosa/
+.zcode/
+.test-data/
+# 票 11-D 任务 2：探针 app 的运行时生成目录（tools/probe-login-item.js 跑完即删，防意外残留入库）
+tools/tmp-probe-login-item/
+Thumbs.db
+assets/skins/*/
+data/
+dist/
+node_modules/
+release/
+sidecar/build/
+# F9（视频翻译）删除后 build/build-sidecar/ 只剩 PyInstaller 中间产物（.toc/.pyz/内嵌 exe，
+# 且 .toc 里全是开发机绝对路径），2026-10-02 起取消跟踪并排除；磁盘上原样保留供对照。
+build/
+
+# 本地会话数据（WorkBuddy 工作日志）
+.workbuddy/
+
+# 会话记忆归档（含完整会话 uuid、家目录绝对路径与截图叙述）：只留本地，不入库不外推
+# ——2026-10-02 推送前脱敏轮决定（甲方案：公开面全新单提交首发）
+docs/session-memory/
+
+# 脱敏闸门只在本机生效（用户 2026-10-06 定：钩子不上传）。
+# Git 出于安全不会在 clone 时采纳仓库指定的 hooks 路径，入库只多一份可绕过的副本，故不入库。
+.githooks/

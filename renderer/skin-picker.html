@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' file: data:" />
+  <title>挑选表情</title>
+  <link rel="stylesheet" href="skin-picker.css" />
+</head>
+<body>
+  <h1>挑选表情 · <span id="skin-name"></span></h1>
+  <p class="hint" id="hint">先点上面的状态，再点下方图片完成分配；动图 GIF 会作为该状态的动画。</p>
+
+  <div id="states" class="states"></div>
+
+  <h2 id="grid-title">表情图片</h2>
+  <div id="grid" class="grid"></div>
+
+  <div class="actions">
+    <button id="btn-skip">清除当前状态</button>
+    <span class="spacer"></span>
+    <button id="btn-cancel">取消</button>
+    <button id="btn-save" class="primary">保存并使用</button>
+  </div>
+  <p id="save-warn" class="warn hidden">必须先给 idle（默认形象）分配一张图。</p>
+
+  <script src="emoji-catalog.js"></script>
+  <script src="skin-picker.js"></script>
+</body>
+</html>

@@ -1,0 +1,355 @@
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  font-family: "Microsoft YaHei UI", "Segoe UI Emoji", sans-serif;
+}
+
+/* 缩放容器（1.0.52 固定窗）：窗口恒 600×600（= 基准 300 × 缩放上限 2），#pet-root 300×300
+   绝对定位钉在窗口右下角，transform: scale 以右下角为原点等比缩放——桌宠视觉右下角 ==
+   窗口右下角，任何 scale 下渲染结果与「窗口 300s + 右下角锚定 setBounds」逐像素等价。
+   缩放期间零窗口操作：透明窗每次 setBounds 都会让 OS 把陈旧帧先拉伸/错位显示 1~2 帧
+   （双向抽搐的根，见主进程 PET_WINDOW_SIZE 注释），纯 transform 想多快有多快 */
+#pet-root {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 300px;
+  height: 300px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 6px;
+  box-sizing: border-box;
+  transform-origin: 100% 100%;
+}
+
+/* 拖文件悬停玻璃特效：只罩住脸部附近一小圈，几何位置由 pet.js 按脸的实时位置驱动；
+   从不拦截指针，透明度随指针接近脸心增强 */
+#glass {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(255, 255, 255, 0.32),
+    rgba(255, 255, 255, 0.1) 55%,
+    rgba(255, 255, 255, 0.04) 85%
+  );
+  backdrop-filter: blur(3px) saturate(1.2);
+  border-radius: 24px;
+}
+
+/* 缩放手柄（1.0.39）：按住 Ctrl 显示在桌宠视觉区（脸）左上方，位置由 pet.js 按脸 rect 定位。
+   形状 = 正方形沿对角线斜切取上半（直角在左上角、斜边从右上到左下，clip-path 裁出）。
+   配色取统计面板蓝色系（--accent #7ec8ff / --accent-deep #5a9ce0）。
+   发光用外层 filter: drop-shadow——clip-path 会把 box-shadow 连同溢出部分一起裁掉，
+   滤镜必须挂在外层容器上，光晕才能落在三角形轮廓外；clip-path 同时裁掉指针命中区，
+   方框右下的透明半格点不到 */
+.scale-handle {
+  position: fixed;
+  z-index: 60;
+  /* 默认 13px，仅兜底：显示时 pet.js 按计数栏高度 ×0.65 重设
+     （1.0.41 用户要求比计数图标小一圈；1.0.40 曾与计数同高） */
+  width: 13px;
+  height: 13px;
+  cursor: nwse-resize;
+  animation: handle-glow 1.4s ease-in-out infinite alternate;
+}
+
+.scale-handle .tri {
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #a8d9ff 0%, #7ec8ff 45%, #5a9ce0 100%);
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+
+.scale-handle:hover .tri {
+  background: linear-gradient(135deg, #d6ecff 0%, #a8d9ff 45%, #7ec8ff 100%);
+}
+
+/* 顶格反馈（1.0.41）：拖到量程边界还继续拖，三角形变红且保持发光。
+   规则放在 ：hover 之后，悬停态也不许把红色盖回去 */
+.scale-handle.limit {
+  animation: handle-glow-limit 1.1s ease-in-out infinite alternate;
+}
+
+.scale-handle.limit .tri {
+  background: linear-gradient(135deg, #ffb0b0 0%, #ff6b6b 45%, #d83a3a 100%);
+}
+
+@keyframes handle-glow {
+  from {
+    filter: drop-shadow(0 0 3px rgba(168, 217, 255, 0.95)) drop-shadow(0 0 9px rgba(126, 200, 255, 0.75))
+      drop-shadow(0 0 20px rgba(90, 156, 224, 0.45));
+  }
+  to {
+    filter: drop-shadow(0 0 5px rgba(190, 228, 255, 1)) drop-shadow(0 0 14px rgba(126, 200, 255, 0.95))
+      drop-shadow(0 0 28px rgba(90, 156, 224, 0.7));
+  }
+}
+
+@keyframes handle-glow-limit {
+  from {
+    filter: drop-shadow(0 0 3px rgba(255, 130, 130, 0.95)) drop-shadow(0 0 9px rgba(255, 80, 80, 0.8))
+      drop-shadow(0 0 20px rgba(216, 58, 58, 0.5));
+  }
+  to {
+    filter: drop-shadow(0 0 5px rgba(255, 170, 170, 1)) drop-shadow(0 0 14px rgba(255, 80, 80, 1))
+      drop-shadow(0 0 28px rgba(216, 58, 58, 0.75));
+  }
+}
+
+/* 右键让路穿透（2 秒）的视觉反馈：变暗 + 变透明（用户裁决 2026-10-06：以视觉让路取代
+   置底，桌宠保持置顶不动）。穿透状态由主进程写窗口（单写入者），这里只做视觉。
+   transition 只声明 filter/opacity——#pet-root 的 transform 是缩放管线在用
+   （1.0.52 固定窗），绝不能被 transition 顺带接管 */
+#pet-root {
+  transition: filter 0.25s ease, opacity 0.25s ease;
+}
+
+body.peek #pet-root {
+  filter: brightness(0.35);
+  opacity: 0.4;
+}
+
+/* 形象外层负责漂浮环境动画，内层负责状态切换时的 pop */
+.pet-body {
+  position: relative;
+  animation: float 3s ease-in-out infinite;
+}
+
+.pet-face {
+  width: 110px;
+  height: 110px;
+  font-size: 96px;
+  line-height: 110px;
+  text-align: center;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  cursor: pointer;
+}
+
+.pet-face.pop {
+  animation: pop 0.25s ease;
+}
+
+.zzz {
+  position: absolute;
+  right: -18px;
+  top: -14px;
+  font-size: 26px;
+  animation: zzz-float 2s ease-in-out infinite;
+}
+
+.particle {
+  position: absolute;
+  bottom: 10px;
+  font-size: 20px;
+  pointer-events: none;
+  animation: rise 1.2s ease-out forwards;
+}
+
+@keyframes rise {
+  from {
+    transform: translateY(0) scale(0.8);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(-80px) scale(1.2);
+    opacity: 0;
+  }
+}
+
+body[data-state="sleep"] #zzz {
+  display: block;
+}
+
+body[data-state="sleep"] .pet-body {
+  animation: none;
+}
+
+/* 说话气泡（M4 接线，结构先行） */
+.bubble {
+  max-width: 220px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.95);
+  color: #333;
+  font-size: 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  text-align: center;
+  animation: bubble-in 0.2s ease;
+}
+
+.hidden {
+  display: none;
+}
+
+.counter {
+  margin-top: 4px;
+  padding: 2px 10px;
+  font-size: 13px;
+  color: #f0f0f0;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 10px;
+}
+
+/* 底行：管理员指示灯 + 击键计数 + 菜单齿轮同一水平线，flex 布局不重叠 */
+.bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 管理员指示灯：底行最左侧小圆灯（与齿轮/计数同款暗色底）。
+   普通权限熄灭（暗点），管理员运行亮绿灯带微光——在管理员游戏里能否计数一眼可辨 */
+.admin-lamp {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.admin-lamp::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.admin-lamp.on::after {
+  background: #3ad05e;
+  box-shadow: 0 0 6px 1px rgba(58, 208, 94, 0.85);
+}
+
+.counter {
+  margin-top: 0;
+  white-space: nowrap; /* 计数一行放下：窗口已拓宽到 300，禁换行防将来数字变长又折行 */
+}
+
+#menu-gear {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.45);
+  color: #f0f0f0;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+#menu-gear:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+
+.counter .seg {
+  display: inline-block;
+}
+
+.counter .dot {
+  margin: 0 6px;
+  opacity: 0.6;
+}
+
+.counter .bump {
+  display: inline-block;
+  animation: bump 0.2s ease;
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* 走过去（move 状态）：把漂浮换成赶路的小颠簸，配合窗口位移看着像在走 */
+body[data-state="move"] .pet-body {
+  animation: walk-bob 0.42s ease-in-out infinite;
+}
+
+@keyframes walk-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+/* 向左走时水平翻转。用独立的 scale 属性而不是 transform：.pet-body 的 float 和
+   .pet-face 的 pop 都占着 transform，再写 transform 会与它们互相覆盖（踩过同类坑） */
+.pet-face.flip {
+  scale: -1 1;
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.85);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes zzz-float {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+@keyframes bubble-in {
+  from {
+    transform: translateY(6px) scale(0.9);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes bump {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}

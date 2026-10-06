@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <title>menu</title>
+  <link rel="stylesheet" href="menu.css" />
+</head>
+<body>
+  <div id="panel" class="panel">
+    <div id="level-bar" class="level-bar hidden">
+      <button id="btn-back">‹ 返回</button>
+      <span id="level-title"></span>
+    </div>
+    <div id="items"></div>
+    <div class="font-row">
+      <span class="font-label">菜单字号</span>
+      <button id="font-minus" title="调小字号">A−</button>
+      <span id="font-value"></span>
+      <button id="font-plus" title="调大字号">A+</button>
+    </div>
+  </div>
+  <script src="menu.js"></script>
+</body>
+</html>

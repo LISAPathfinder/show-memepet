@@ -1,0 +1,282 @@
+/* 与菜单 UI（menu.css）同一套设计语言：同色板、半透明边框、8px 圆角系。
+   夜间为默认；日间经 prefers-color-scheme 自动切换（由主进程 nativeTheme 控制） */
+:root {
+  --bg: #191a1e;
+  --text: #e8e8ea;
+  --muted: #9aa0ab;
+  --panel: #2a2c33;
+  --border: rgba(255, 255, 255, 0.12);
+  --accent: #7ec8ff;
+  --accent-deep: #5a9ce0;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8;
+    --text: #24262b;
+    --muted: #6b7280;
+    --panel: #f0f1f5;
+    --border: rgba(0, 0, 0, 0.12);
+    --accent: #2d6fb8;
+    --accent-deep: #1d5494;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 16px 22px 22px;
+  box-sizing: border-box;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  user-select: none;
+}
+
+/* 标题行：加宽字距，底部细分隔线 */
+h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+/* 分区标题：muted 小字 + 尾随细线 */
+h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  font-weight: normal;
+  letter-spacing: 0.06em;
+  margin: 20px 0 10px;
+  color: var(--muted);
+}
+
+h2::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* 概览卡：菜单条目同款 8px 圆角 + 半透明边框 */
+.cards {
+  display: flex;
+  gap: 10px;
+}
+
+.card {
+  flex: 1;
+  padding: 16px 2px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: center;
+  overflow: hidden;
+}
+
+/* 数字固定字号不缩小：520 宽窗口下 8 位数（12,849,026）也装得下 */
+.card-num {
+  font-size: 27px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 第一张卡（今日）用强调色点亮，其余保持素色 */
+.cards .card:first-child .card-num {
+  color: var(--accent);
+}
+
+.card-label {
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mouse-row {
+  display: flex;
+  gap: 10px;
+}
+
+.mouse-row .mseg {
+  flex: 1;
+  padding: 12px 0 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.mouse-row .mnum {
+  display: block;
+  margin-top: 2px;
+  font-size: 21px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Top 榜：菜单小按钮同款 6px 圆角条 */
+.top10 .bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  font-size: 13px;
+}
+
+.bar-key {
+  width: 80px;
+  text-align: right;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  flex: 1;
+  height: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 7px;
+  min-width: 2px;
+}
+
+.bar-count {
+  width: 60px;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 趋势图容器：悬浮 tip 的定位基准；底色/边框/圆角挂容器——svg 按容器实际像素 1:1 出图
+   （viewBox=像素），不随窗口拉伸，字号线宽与面板其余文字一致 */
+.trend {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.trend svg {
+  display: block; /* 去掉 inline svg 的基线空隙，容器高度=图高 */
+  width: 100%;
+}
+
+/* 悬浮预览的显隐开关（guide/圆点/tip 共用） */
+.trend .hidden {
+  display: none;
+}
+
+/* 空态：菜单条目同款 8px 圆角实线框 */
+.empty {
+  padding: 20px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.axis-label {
+  font-size: 11px;
+  fill: var(--muted);
+}
+
+/* 趋势面积图：颜色只能放样式表（CSP 拦内联样式） */
+.trend-area {
+  fill: url(#trendGrad);
+}
+
+.trend-stop-a {
+  stop-color: var(--accent);
+  stop-opacity: 0.22;
+}
+
+.trend-stop-b {
+  stop-color: var(--accent);
+  stop-opacity: 0;
+}
+
+.trend-line {
+  fill: none;
+  stroke: var(--accent-deep);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.trend-dot {
+  fill: var(--accent-deep);
+}
+
+/* 逐日刻度线：图底一排 4px 小线 */
+.axis-tick {
+  stroke: var(--muted);
+  stroke-width: 1;
+  opacity: 0.55;
+}
+
+/* 纵轴横向网格：淡虚线垫底层，不抢曲线 */
+.trend-grid {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.35;
+}
+
+/* 纵轴数值标签：绘图区左外侧 */
+.axis-y {
+  font-size: 10px;
+  fill: var(--muted);
+}
+
+/* 悬浮预览：竖直定位虚线 + 曲线上的高亮圆点（都不接收指针，不挡 mousemove） */
+.trend-guide {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.trend-hover-dot {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+/* 悬浮数值卡：跟随最近日期点，贴顶放不下自动翻到点下方 */
+.trend-tip {
+  position: absolute;
+  z-index: 5;
+  padding: 3px 9px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}

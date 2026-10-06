@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+  <title>击键统计</title>
+  <link rel="stylesheet" href="stats.css" />
+</head>
+<body>
+  <h1>击键统计</h1>
+
+  <div class="cards">
+    <div class="card"><div class="card-num" id="stat-today">-</div><div class="card-label">今日</div></div>
+    <div class="card"><div class="card-num" id="stat-last7">-</div><div class="card-label">最近 7 天</div></div>
+    <div class="card"><div class="card-num" id="stat-all">-</div><div class="card-label">累计</div></div>
+  </div>
+
+  <h2>鼠标点击（今日）</h2>
+  <div class="mouse-row" id="mouse-summary">-</div>
+
+  <h2>手柄按键（今日）</h2>
+  <div id="gamepad" class="top10"></div>
+
+  <h2>今日 Top10 按键</h2>
+  <div id="top10" class="top10"></div>
+
+  <h2>最近 14 天击键趋势</h2>
+  <div id="trend" class="trend"></div>
+
+  <script src="stats.js"></script>
+</body>
+</html>

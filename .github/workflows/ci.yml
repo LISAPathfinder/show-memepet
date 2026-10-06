@@ -1,0 +1,99 @@
+name: CI
+
+# 只跑十三个纯逻辑回归件。为什么没有 npm install：
+#   test-layout-menu / verify-walk / test-data-root / verify-pass-hold / verify-identity /
+#   verify-autostart-migration / verify-single-writer / verify-fallback-box / verify-rebuild-grace /
+#   verify-hit-region / verify-unlock-position / verify-box-cadence / verify-ctrl-reconcile
+#   十三个件零第三方依赖，
+#   只 require 仓库内 js 与 node 内置模块（config.js 的 require('electron') 是函数内惰性调用，
+#   纯 node 下走不到那条分支），所以 checkout + node 即可跑，不必装 Electron、不必编译原生模块。
+#   其中 `verify-single-writer` / `verify-hit-region` / `verify-unlock-position` / `verify-box-cadence` /
+#   `verify-ctrl-reconcile`
+#   这一类源码提取件（1.0.57 起）**只读源码文本或在 vm 里求值**，且**不许**接实例、不许加 exit 3
+#   （票 11-G 硬约束：给 CI 里跑的纯逻辑件加占用自检＝自己造红灯）。
+# 为什么是 windows-latest：项目范围锁死「仅 Windows」，与产品语义一致。这八个件在 linux 上
+#   的可移植性未实测（作者机器无 linux node 环境），故不按「应该能跑」写 ubuntu runner。
+# 为什么不放连调试端口的那批（verify-passthrough / verify-passthrough-desync / verify-cursor-sync /
+#   verify-main-passthrough / verify-rescue / measure-ignore-storm / verify-scale 等 22 件）与
+#   verify-petcovered-alpha：它们需要真实桌面会话、独占实例（1.0.56 起其中 13 件 verify-* 会主动
+#   exit 3 拒绝装机版实例在场）、koffi 造窗与真实光标路由，CI 上测不出真结论。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  logic:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # 本机实测基线（2026-10-02，node v24）：13 pass / 45 通过 / 7 pass / 全通过，均 exit 0
+      - name: 菜单弹出几何（13 用例）
+        run: node tools/test-layout-menu.js
+
+      - name: 走过去纯逻辑（三击判定/冷却/时长钳制/朝向/落点）
+        run: node tools/verify-walk.js
+
+      - name: 数据根定位（7 用例）
+        run: node tools/test-data-root.js
+
+      - name: 穿透判定状态机（10 场景，含大幅离开快速通道）
+        run: node tools/verify-pass-hold.js
+
+      # 名字单一真源守卫（票 11-A）：identity.js ↔ package.json 四项逐项比对 + tools 裸字面量扫描。
+      # 漏改一处从静默失效变必红；票 11-B 改名的前后都必须过这一步
+      - name: 名字一致性（identity ↔ package.json）
+        run: node tools/verify-identity.js
+
+      # 自启注册表读回纯函数（票 11-C 任务 1d 立件，票 11-Q 判据换轨）：实机 dump 形态夹具，
+      # 含重写版「11-B 回归基线」——旧缺陷正则命中 0（夹具保真）+ 活判据 findRunEntry 命中 1，
+      # 行首空白容忍钉在还在跑的读回路径上，防再写出失配正则的红灯
+      - name: 自启注册表读回纯函数（含 11-B 回归基线重写版）
+        run: node tools/verify-autostart-migration.js
+
+      # 穿透单写入者的源码级守卫（1.0.57 加固轮）：渲染端无写入口 = 结构性事实，
+      # 件里第 1、2 条是正向对照（主进程那个唯一写入者必须在位），防"读不到就打绿灯"
+      - name: 穿透单写入者（源码守卫）
+        run: node tools/verify-single-writer.js
+
+      # 兜底可交互区派生（票 11-G 任务 3）：从 main.js 提取切片在 vm 里求值，
+      # 断言兜底盒右下角恒贴 (600,600)——1.0.55 及以前的写死常量落在固定窗空白左上角
+      - name: 兜底可交互区派生
+        run: node tools/verify-fallback-box.js
+
+      # 重建/首屏命中区宽限期（1.0.58，用户实机反馈 ○g=B）：断言宽限内并集覆盖未渲染的计数区、
+      # 宽限过后退回上报盒、透明空白仍放行——三向都考，防"为了修第一次点击把整窗变成可点"
+      - name: 重建命中区宽限期
+        run: node tools/verify-rebuild-grace.js
+
+      # 命中区与余量红线（票 11-J 任务 1 判据件）：vm 提取 interactiveBox+pointInBoxes 造现场 3 真实矩形，
+      # 断言本体区内/空隙区外/远点区外/脸中心正向对照/吞点击面积 ≤1.2× 元素真实面积（实算 1.172×）。
+      # 改前副本实测 2.024× exit 1（空隙点 3/3 被吞）——改 pad 前先让这件立起来，参数手感让位给读数
+      - name: 命中区判据（含 1.2× 余量红线）
+        run: node tools/verify-hit-region.js
+
+      # 解锁/唤醒位置归位判据（票 11-K）：vm 提取 resolvePetPosition/延迟复查函数注入桩显示器，
+      # 断言 defer 路径出屏不弹回主屏（先按保存位置建窗+复查拉回）、真拔屏才归位默认且决策落日志、
+      # defer 传递链（unlock→recreate→create→resolve）在位——防「解锁后桌宠跳回右下角」回归
+      - name: 解锁位置归位判据（票 11-K）
+        run: node tools/verify-unlock-position.js
+
+      # 上报节奏判据（票 11-L / 11-J 任务 2b）：vm 提取 interactiveBox/boxSignature/reportInteractiveBox
+      # 注入桩 DOM，断言 rAF 帧驱动 + 3px 量化（缓动不帧级 IPC、突变一帧即报）、1s 兜底与点名通道
+      # 在位——防「主进程手里的盒可陈旧 1s」（第四层根因）回退
+      - name: 上报节奏判据（票 11-L）
+        run: node tools/verify-box-cadence.js
+
+      # Ctrl 显隐状态对账自愈判据（票 11-S 任务 1）：vm 提取 petCtrlState/pushPetCtrlState/trackPetCtrl/
+      # reconcileCtrlState 注入可编程 GetAsyncKeyState 桩，断言两拍门槛（闩住后两拍 ⇒ 恰一次 down:false
+      # 推送+对账日志、单拍必须零推送、真按住不误纠、丢 keydown 方向）与 bootApp 函数体内
+      # setInterval(reconcileCtrlState, ≤2000) 接线（按函数体定界，禁全局 includes 恒绿守卫）——
+      # f31b6ba 的自愈路径此前零判据零日志（装机「Ctrl 状态对账」0 命中）
+      - name: Ctrl 对账自愈判据（票 11-S）
+        run: node tools/verify-ctrl-reconcile.js

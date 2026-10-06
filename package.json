@@ -1,0 +1,86 @@
+{
+  "name": "showcase",
+  "version": "1.1.0",
+  "description": "Emoji 桌宠 + 全局按键统计（仅本地存储）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "ci": "node tools/run-ci.js",
+    "dist": "electron-builder --win nsis"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "APR",
+    "url": "https://github.com/LISAPathfinder"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LISAPathfinder/show-memepet.git"
+  },
+  "homepage": "https://github.com/LISAPathfinder/show-memepet#readme",
+  "devDependencies": {
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "7z-wasm": "^1.2.0",
+    "adm-zip": "^0.6.1",
+    "koffi": "^3.2.1",
+    "uiohook-napi": "^1.5.5"
+  },
+  "allowScripts": {
+    "uiohook-napi@1.5.5": true,
+    "electron@44.3.0": true,
+    "electron-winstaller@5.4.0": true
+  },
+  "build": {
+    "appId": "com.showcase.app",
+    "productName": "Showcase",
+    "directories": {
+      "output": "../showcase-build/release"
+    },
+    "files": [
+      "main.js",
+      "identity.js",
+      "autostart-elevation.js",
+      "autostart-migration.js",
+      "preload.js",
+      "keylistener.js",
+      "menu-layout.js",
+      "walk.js",
+      "resources/icon.ico",
+      "config.js",
+      "skins.js",
+      "gamepad-xinput.js",
+      "lines.js",
+      "renderer/**"
+    ],
+    "asarUnpack": [
+      "node_modules/uiohook-napi/**",
+      "node_modules/node-gyp-build/**",
+      "node_modules/koffi/**",
+      "node_modules/7z-wasm/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "guid": "fc5d11e1-8dec-51f5-b3eb-7f4d1eb01281",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "include": "resources/installer.nsh",
+      "artifactName": "showcase-setup-${version}.${ext}",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

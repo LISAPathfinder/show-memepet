@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' file: data:" />
+  <title></title><!-- 票 11-A：标题取自 identity.js（经 preload/IPC 注入），此处不写字面量 -->
+  <link rel="stylesheet" href="pet.css" />
+</head>
+<body data-state="idle">
+  <!-- glass 必须留在 #pet-root 外：它按指针/脸的视口坐标定位（fixed），进 transform 容器会被二次缩放错位 -->
+  <div id="glass"></div>
+  <!-- 缩放手柄（1.0.39）：按住 Ctrl 出现在桌宠左上方，拖它缩放。同样必须留在 #pet-root 外，
+       否则会被 transform: scale 一起放大缩小 -->
+  <div id="scale-handle" class="scale-handle hidden" title="拖动缩放桌宠"><div class="tri"></div></div>
+  <!-- 缩放容器：Ctrl+滚轮整体等比缩放（transform，rect 值天然=视觉 DIP，穿透/菜单坐标零适配） -->
+  <div id="pet-root">
+    <div id="bubble" class="bubble hidden"></div>
+    <div class="pet-body">
+      <div id="pet-face" class="pet-face"></div>
+      <div id="zzz" class="zzz hidden">💤</div>
+    </div>
+    <div class="bottom-row">
+      <span id="admin-lamp" class="admin-lamp"></span>
+      <div id="counter" class="counter hidden"></div>
+      <button id="menu-gear" title="打开菜单">⚙</button>
+    </div>
+  </div>
+  <script src="pet.js"></script>
+</body>
+</html>
