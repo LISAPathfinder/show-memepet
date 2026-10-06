@@ -317,4 +317,4 @@ npm run dist        # 产物 ../showcase-build/release/showcase-setup-<版本>.e
 
 MIT（见 [LICENSE](LICENSE)）。可以自由使用、复制、修改、合并、出版、分发、再授权及销售副本，**含商用**；唯一条件是保留版权声明与许可声明。软件按「现状」提供，不含任何担保。
 
-署名用 `showcase contributors`（曾用 `desktop-pet contributors`，随改名同步），不要求写作者真实身份；本项目的提交身份已匿名化（见 `git config user.name` / `user.email` 为仓库级配置）。
+版权声明写 **`APR`**（与 `package.json` 的 `author`、安装包 exe 的 `LegalCopyright` 三处一致；此前是 `showcase contributors`／更早的 `desktop-pet contributors`，1.1.0 首发时统一成署名个人）。提交身份用 GitHub 的 noreply 地址 `用户名@users.noreply.github.com`，**不含真实邮箱**——代价是这笔提交在 Gitee 侧关联不到账号（Gitee 只认账号里已验证的邮箱，而该 noreply 域名无 MX，验证邮件投不到），GitHub 侧正常关联。

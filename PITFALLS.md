@@ -1064,6 +1064,17 @@ verify/measure/probe）必须 grep 一遍日志 `uncaughtException`，非 0 就�
   「CI 跑过」是两回事；无 remote 的仓，push 触发的那道永远不存在，本地装置是唯一会被真实执行的层。
   新功能提交的读数只证明新功能活着，**全量绿才证明回归网活着**；「我测过了」回答不了「别的链还好吗」。
 
+### 92. 发布后新增的两道「显示层与归属层」坑：CI 触发面写错分支＝第二个假闸门；Gitee 不认 GitHub 的 noreply 署名（2026-10-06）
+
+- **坑 A：`ci.yml` 的 `on.push.branches` 写死 `[main]`，而公开仓只有 `publish`。** §91 说"无 remote ⇒ Actions 那道从未被机器执行"，发布之后 remote 有了，但**触发条件仍然不匹配**，所以那道闸门**依旧一次都没跑过**——`gh run list` 回读是**空的**。
+  教训形态：修好"没有 CI"之后，要验的是**它到底会不会被触发**，不是"文件在不在"。判据固定成一条：推完立刻 `gh run list -R <owner>/<repo>`，**看不到 run ＝ 那道不存在**，与"CI 红"是两种病（红至少说明它在跑）。
+  修法是一行（`branches: [main, publish]`），但它动的是**公开树里的文件** ⇒ 代价要摊清：要么在 `publish` 上补一笔后继提交（release tag 仍钉在发布那一笔，分支往前开），要么重生成快照并 force push（不可逆）。首发当天选前者。
+- **坑 B：同一笔提交在 GitHub 关联到账号、在 Gitee 变成一个字母头像。** 一手读数：GitHub `GET /repos/…/contributors` 回 `login=LISAPathfinder`、`commits/<sha>` 的 `author.login` 也在；Gitee 仓库页「贡献者」却是首字母 `A` 的占位头像（作者名是 `APR`）。
+  两侧规则不同：GitHub 会把 `用户名@users.noreply.github.com` **反解**成账号；Gitee 的官方口径是**提交邮箱必须出现在「设置 → 多邮箱管理」里**，没有 noreply 反解这回事。
+  而这条路走不通：`users.noreply.github.com` **既无 MX 也无 A 记录**（`dns.resolveMx`/`resolve4` 双双 `ENOTFOUND`，对照 `gitee.com`/`qq.com` 都有 MX）⇒ Gitee 的验证邮件根本投不到，绑不上。GitHub 官方邮箱文档也没承诺该地址转发收信，**别按"应该能收到"下结论**。
+  **结论（这是取舍不是 bug）**：双平台镜像用 noreply 署名＝只有 GitHub 侧有归属。要 Gitee 也关联只有两条路，都不划算——换成真实邮箱＝那串地址永久进公开提交元数据（**脱敏闸门不扫 commit 元数据，不会拦你**，等于自己拆掉刚做的脱敏）；换成 Gitee 的不公开邮箱＝反过来让 GitHub 脱钩，还要 force push 重建 tag/release。`.mailmap` 顶不了：那是命令行显示层的别名，两家网页的统计都不吃。
+- **通则**：**"署名/元数据/触发条件"这类东西，落地后要拿对方系统的读接口回读一次**（`gh api …/contributors`、`gh run list`、注册表 `DisplayVersion`、任务管理器列表），不能只信"我这边写进去了"。同轮还抓到一条同型假象：任务管理器「启动应用」的发布者列是进程内缓存，覆盖安装后不自己刷新（见 §84）——**先读文件/注册表侧，再看列表**。
+
 ## 十、复盘：一个「点不动」修了 7 轮 —— 方法上的教训
 
 这是本项目目前代价最大的一次排查（用户第 7 次反馈才彻底解决）。技术坑分别记在 #30/#36/#39/#40/#43/#44/#45，这里只记**为什么会拖这么久**，以及下次怎么避开。
