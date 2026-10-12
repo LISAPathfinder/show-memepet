@@ -1,21 +1,25 @@
 name: CI
 
-# 只跑十三个纯逻辑回归件。为什么没有 npm install：
-#   test-layout-menu / verify-walk / test-data-root / verify-pass-hold / verify-identity /
-#   verify-autostart-migration / verify-single-writer / verify-fallback-box / verify-rebuild-grace /
-#   verify-hit-region / verify-unlock-position / verify-box-cadence / verify-ctrl-reconcile
-#   十三个件零第三方依赖，
+# 只跑纯逻辑回归件（清单以 `run: node tools/…` 步骤为准，动态解析、不手抄件数）。
+# 为什么有 npm ci：verify-archive-import 依赖 adm-zip 与 7z-wasm（纯 JS/WASM，无原生编译，
+#   --ignore-scripts 下 electron 不触发二进制下载）；verify-checkjs 依赖 typescript（devDep，
+#   精确 pin——棘轮读数随编译器版本整体漂，禁 ^）。其余件零第三方依赖。
+# 为什么没有装 Electron：test-layout-menu / verify-walk / test-data-root / verify-pass-hold /
+#   verify-identity / verify-autostart-migration / verify-single-writer / verify-fallback-box /
+#   verify-rebuild-grace / verify-hit-region / verify-unlock-position / verify-box-cadence /
+#   verify-ctrl-reconcile / verify-build-files / verify-docs-structure
+#   这些件零第三方依赖，
 #   只 require 仓库内 js 与 node 内置模块（config.js 的 require('electron') 是函数内惰性调用，
 #   纯 node 下走不到那条分支），所以 checkout + node 即可跑，不必装 Electron、不必编译原生模块。
 #   其中 `verify-single-writer` / `verify-hit-region` / `verify-unlock-position` / `verify-box-cadence` /
 #   `verify-ctrl-reconcile`
 #   这一类源码提取件（1.0.57 起）**只读源码文本或在 vm 里求值**，且**不许**接实例、不许加 exit 3
 #   （票 11-G 硬约束：给 CI 里跑的纯逻辑件加占用自检＝自己造红灯）。
-# 为什么是 windows-latest：项目范围锁死「仅 Windows」，与产品语义一致。这八个件在 linux 上
+# 为什么是 windows-latest：项目范围锁死「仅 Windows」，与产品语义一致。这些件在 linux 上
 #   的可移植性未实测（作者机器无 linux node 环境），故不按「应该能跑」写 ubuntu runner。
 # 为什么不放连调试端口的那批（verify-passthrough / verify-passthrough-desync / verify-cursor-sync /
-#   verify-main-passthrough / verify-rescue / measure-ignore-storm / verify-scale 等 22 件）与
-#   verify-petcovered-alpha：它们需要真实桌面会话、独占实例（1.0.56 起其中 13 件 verify-* 会主动
+#   verify-main-passthrough / verify-rescue / measure-ignore-storm / verify-scale 等）与
+#   verify-petcovered-alpha：它们需要真实桌面会话、独占实例（其中 13 件 verify-* 会主动
 #   exit 3 拒绝装机版实例在场）、koffi 造窗与真实光标路由，CI 上测不出真结论。
 
 on:
@@ -32,6 +36,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+
+      # 仅 verify-archive-import 需要 adm-zip / 7z-wasm（纯 JS/WASM）；--ignore-scripts
+      # 跳过 electron 的二进制下载 postinstall（CI 纯逻辑件不需要 electron.exe）
+      - name: 安装依赖（跳过 postinstall）
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       # 本机实测基线（2026-10-02，node v24）：13 pass / 45 通过 / 7 pass / 全通过，均 exit 0
       - name: 菜单弹出几何（13 用例）
@@ -97,3 +106,41 @@ jobs:
       # f31b6ba 的自愈路径此前零判据零日志（装机「Ctrl 状态对账」0 命中）
       - name: Ctrl 对账自愈判据（票 11-S）
         run: node tools/verify-ctrl-reconcile.js
+
+      # 打包输入闭包钉子：从 main.js/preload.js 递归求 require('./x') 相对闭包 + loadFile 目标，
+      # 断言闭包 ⊆ build.files 且 build.files 无死登记（renderer/** 与 resources/icon.ico 走显式豁免表）——
+      # 「新增 require 忘登记进打包清单」从靠人记两步变成必红（两处同时漏登就无声的洞，票 11-D 差点踩）。
+      # verify-asar.js 的比对清单由本件的派生函数供给（单一事实源，手抄清单已废除）
+      - name: 打包输入闭包钉子（require 闭包 ↔ build.files）
+        run: node tools/verify-build-files.js
+
+      # PITFALLS 条目结构断言（2026-10-10 立）：「新坑条目掉进 ## 十 之后」这一错位已实翻车三次
+      # （§86/87/88、§91 同型、§96=17cf8b4 又掉进 1172 行「## 十、复盘」之后，靠肉眼 grep 才发现）——
+      # 口头自检被证伪，改机器断言：R1 末章隔离（锚找不到也红）/ R2 条号唯一（46 历史重号进豁免表）/
+      # R3 max==次大+1（防跳号）/ R4 读数下限（≥50 条且 max≥90，防读空假绿）
+      - name: PITFALLS 条目结构断言
+        run: node tools/verify-docs-structure.js
+
+      # 压缩包导入回归（35 断言，纯 node；2026-10-09 从「无标记不执行」桶升入强制层）：
+      # 现场构造真实 zip（adm-zip）/7z/tar/tar.gz（7z-wasm 建包）再调真 skins.importArchive，
+      # 断言魔数识别、子目录平铺、穿越条目不外逃、重名递增、无图抛错、临时目录无残留——
+      # 改动 skins.js 导入逻辑后此件必跑；本仓唯二需要 npm ci 的件之一（另一件 verify-checkjs
+      # 依赖 typescript 精确 pin 5.9.3，见文件头「为什么有 npm ci」；本件依赖 adm-zip / 7z-wasm 纯 JS/WASM）
+      - name: 压缩包导入回归（真实建包/真模块导入）
+        run: node tools/verify-archive-import.js
+
+      # checkJs 静态层棘轮（票 11-Z，2026-10-11 立）：tsc --noEmit + allowJs/checkJs（tsconfig.checkjs.json，
+      # include 根 *.js + renderer/**/*.js + types/**/*.d.ts）对源码全量类型检查，断言 ①错误条数只降不升
+      # （BASELINE=23 + 逐文件现算 @ typescript 5.9.3 精确 pin；基线无键=新文件冒错误=红）
+      # ②petAPI ambient 在位（types/globals.d.ts 被摘必须立刻红，不靠总条数偶然没涨）
+      # ③下限防御（解析 0 条必红——tsc 没跑起来/checkJs 被关不许伪装成通过）
+      # ④只降不升（实际<基线才明打「基线可下调 N 条」仍 exit 0；门控＝c 且 e 且 f——缩面/缺件时绝无
+      # 下调提示）。dev 面文件不进 build.files、不产构建物
+      # ⑤检查面覆盖（票 11-Z4）：build.files 派生的打包 js 面 == tsc --listFilesOnly 实际输入面，
+      # 双向点名——拦「include 缩面 / glob 深度漂移 / 白名单漂移」被伪装成基线下降
+      # ⑥加载面覆盖（票 11-Z5）：html 的 script src 才是权威加载清单——拦「产品 js 被删/改名而 html
+      # 没同步」（e 条对目录条目枚举现存文件，文件消失 A/B 同步缩小看不见）；单向 C⊆B，不判反向
+      # ⑥的 f₂ 扩面（票 11-Z6）：createElement('script') 造加载器这条特征同时扫 B 面全部 js（不只 html），
+      # 命中即红——有人用脚本造加载器时「加载清单能从静态文本推出」的前提就失效了
+      - name: checkJs 静态层棘轮（tsc --noEmit）
+        run: node tools/verify-checkjs.js

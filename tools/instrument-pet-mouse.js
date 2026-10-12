@@ -1,3 +1,4 @@
+// @runtime: shared —— 经 CDP 在渲染端装鼠标事件记录器，attach 9229/9333 共享 dev 隔离实例
 // 在桌宠页面上装一个鼠标事件记录器（通过 CDP），滚动保留最近 40 条事件，用来判定
 // 「真实点击时页面收到了什么」——区分「mousedown 丢」和「事件根本没到」。
 // 用法：node tools/instrument-pet-mouse.js [install|dump|clear]

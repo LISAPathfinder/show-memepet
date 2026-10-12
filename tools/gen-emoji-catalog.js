@@ -1,3 +1,4 @@
+// @runtime: none —— emoji 目录生成器（联网），无断言，仅目录结构变更时手动跑
 // 生成 renderer/emoji-catalog.js：完整 Windows 可渲染 emoji 目录（剔除肤色变体）。
 // 数据源 unicode-emoji-json（jsdelivr），产物供 skin-picker 的 emoji 皮肤映射挑选。
 // 运行：node tools/gen-emoji-catalog.js

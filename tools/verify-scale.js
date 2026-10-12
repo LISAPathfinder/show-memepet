@@ -1,3 +1,4 @@
+// @runtime: shared —— 缩放链路 37 断言，attach 调试端口+真实合成拖拽
 // 验证缩放链路（1.0.30 Ctrl+滚轮 → 1.0.31 Ctrl+拖拽 → 1.0.39 Ctrl 手柄拖动 → 1.0.52 固定窗）：
 // 按住 Ctrl 桌宠左上方出现发光三角手柄（比计数栏小一圈），拖手柄缩放——1.0.52 起窗口恒
 // 600×600（= 基准 300 × 上限 2）、#pet-root 钉窗口右下角 + transform-origin 右下，拖拽全程
@@ -11,7 +12,7 @@
 // 日志出现「缩放后回挪 …（内容矩形出屏）」。期望公式与 main.js pet:scale-end 同式：
 //   contentX = x + (600 − round(300·s))；contentY = y + (600 − round(160·s))；s 取缩放后新值；
 //   dx = max(0, wa.x − contentX)；dy = max(0, wa.y − contentY)。
-//   300/160 手抄 main.js 的视觉基准宽与 PET_CONTENT_HEIGHT（同步义务同 verify-pass-hold）。
+//   300/160 手抄 core/geometry.js 的视觉基准宽与 PET_CONTENT_HEIGHT（票 12-A 起为真源；同步义务同 verify-pass-hold）。
 // 用法（先起带调试端口的隔离实例）：
 //   PET_USER_DATA_DIR=<临时目录> SHOWCASE_DATA_DIR=<同一临时目录> \
 //     npx electron --inspect=9229 --remote-debugging-port=9333 .
@@ -24,11 +25,24 @@
 // pet:ctrl 通道注入的方式驱动（与 trackPetCtrl 的下发同一条通道）；按真键的终判留实机验收。
 const fs = require('fs');
 const path = require('path');
+
+// §96（2026-10-10 票）：CDP 表达式 require 配置必须用绝对路径（只能 realpathSync.native 规范化
+// 盘符大小写），否则与产品 config 分裂成两个缓存副本——set 的 petPosition/petScale 产品读不到。
+// native 失败兜底显式（盘符大写 + 明打）。
+const ROOT = (() => {
+  const r = path.resolve(__dirname, '..');
+  try { return fs.realpathSync.native(r); } catch (e) {
+    const fb = r.replace(/^([a-zA-Z]):/, (d) => d.toUpperCase()); // 回调收到的是全匹配（含冒号），不能再加 ':'
+    console.error(`⚠ verify-scale: realpathSync.native 失败（${e.message}）——已显式退回「盘符大写」兜底：${fb}`);
+    return fb;
+  }
+})();
+const CFG_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))})`;
 const identity = require('../identity');
 
 // 产品同款回挪期望（票 11-N，与 main.js pet:scale-end 的 :2617–2626 同式）：
 // s 必须取**缩放后**的新值；wa 用与回挪同源的 getDisplayNearestPoint(起点).workArea。
-// 300 = 视觉基准宽（PET_SIZE）、160 = PET_CONTENT_HEIGHT，均手抄 main.js，改动需同步。
+// 300 = 视觉基准宽（PET_SIZE）、160 = PET_CONTENT_HEIGHT，均手抄 core/geometry.js（票 12-A 起为真源），改动需同步。
 const expectedAfterScale = (x, y, s, wa) => {
   const contentX = x + (600 - Math.round(300 * s));
   const contentY = y + (600 - Math.round(160 * s));
@@ -110,7 +124,7 @@ async function main() {
     `).then(JSON.parse);
   const readConfig = () =>
     mainProc
-      .evaluate(`(() => { const c = process.mainModule.require('./config'); return JSON.stringify({ petScale: c.get('petScale'), petPosition: c.get('petPosition') }); })()`)
+      .evaluate(`(() => { const c = ${CFG_REQ}; return JSON.stringify({ petScale: c.get('petScale'), petPosition: c.get('petPosition') }); })()`)
       .then(JSON.parse);
   const readRenderer = () =>
     renderer.evaluate(`
@@ -179,7 +193,7 @@ async function main() {
         const { BrowserWindow } = process.mainModule.require('electron');
         const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
         w.setPosition(${x}, ${y});
-        process.mainModule.require('./config').set('petPosition', { x: ${x}, y: ${y} });
+        process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))}).set('petPosition', { x: ${x}, y: ${y} });
         return 'placed';
       })()`
     );

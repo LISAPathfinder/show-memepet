@@ -1,3 +1,4 @@
+// @runtime: self-launch —— 件内 spawn 带调试端口的隔离实例（9229 门槛），趁共享实例未起先行
 // 验证「开机自启时以管理员身份运行」的 Run 键方案（1.0.32，替代任务计划方案）。
 // 可自动化部分：
 //   ① 判定纯函数 shouldRequestElevationOnBoot 的真值表（require 真模块，非镜像）
@@ -12,6 +13,18 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const electronExe = require('electron'); // electron 包在普通 node 下导出 dist\electron.exe 的绝对路径
+
+// §96（2026-10-10 票）：CDP 表达式 require 配置必须用绝对路径（只能 realpathSync.native 规范化
+// 盘符大小写），否则与产品 config 分裂成两个缓存副本。native 失败兜底显式（盘符大写 + 明打）。
+const ROOT = (() => {
+  const r = path.resolve(__dirname, '..');
+  try { return fs.realpathSync.native(r); } catch (e) {
+    const fb = r.replace(/^([a-zA-Z]):/, (d) => d.toUpperCase()); // 回调收到的是全匹配（含冒号），不能再加 ':'
+    console.error(`⚠ verify-autostart-elevation: realpathSync.native 失败（${e.message}）——已显式退回「盘符大写」兜底：${fb}`);
+    return fb;
+  }
+})();
+const CFG_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))})`;
 
 const { AUTOSTART_ARG, ELEVATED_AUTOSTART_ARG, shouldRequestElevationOnBoot } = require('../autostart-elevation');
 
@@ -80,7 +93,7 @@ async function main() {
 
     const inArgv = await inspectorEvaluate(9229, `process.argv.includes(${JSON.stringify(AUTOSTART_ARG)})`);
     check('Run 键 args 标记到达主进程 argv（setLoginItemSettings 同款传递路径）', inArgv, true);
-  const flag = await inspectorEvaluate(9229, `process.mainModule.require('./config').get('autoStartAdmin')`);
+  const flag = await inspectorEvaluate(9229, `${CFG_REQ}.get('autoStartAdmin')`);
   check('隔离实例 autoStartAdmin 默认关', flag, false);
     // 本件读的是自己隔离实例刚写的日志，写用名恒为 identity.LOG_NAME，无需候选回落（票 11-A）
     const { LOG_NAME } = require('../identity');

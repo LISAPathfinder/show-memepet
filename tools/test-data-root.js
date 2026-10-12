@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：数据根定位单测，纯 node，执行面在 run-ci.js
 // config.js 数据根定位单测：用假 electron 模块驱动 app.isPackaged / app.getPath('exe')，
 // 覆盖新结构（程序在 <容器>\bin\ 下）、旧结构（安装目录同级 -data）、写失败回退、dev 四种分支，
 // 外加环境变量覆盖的行为级对拍（⑤，票 11-R：⑥ 退休的退出码牙齿——旧名必须被忽略、新名必须生效）。

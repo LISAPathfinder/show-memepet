@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：压缩包导入回归 35 断言（adm-zip/7z-wasm 纯 node），执行面在 run-ci.js
 // 验证压缩包导入（1.0.45 拖 zip/7z 建皮肤；1.0.46 扩到 rar/cbz/cbr/tar 系）。
 // 可自动化部分（全部走真模块 skins.importArchive，非镜像）：
 //   ① 现场构造真实 zip（adm-zip 建包）：子目录/深层嵌套/GBK 乱码风格文件名/假 jpg+webp

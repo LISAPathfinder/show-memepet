@@ -25,6 +25,9 @@
       <button id="menu-gear" title="打开菜单">⚙</button>
     </div>
   </div>
+  <!-- 纯函数先加载：BOX_PAD / BOX_EPSILON / boxSignature 的真源在 core/interactive-box.js（票 0a-2），
+       pet.js 里的 interactiveBox / reportInteractiveBox 靠全局词法作用域引用它，顺序反了才炸 -->
+  <script src="../core/interactive-box.js"></script>
   <script src="pet.js"></script>
 </body>
 </html>

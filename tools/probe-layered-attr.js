@@ -1,3 +1,4 @@
+// @runtime: installed —— 读任意真实窗口 GLWA 分层属性（petCovered 取证，带 hwnd 参数），不碰调试端口
 // 对任意 hwnd 打印扩展样式与分层属性读数（GLWA），用于 petCovered 按 alpha 判定（票 5）的取证。
 // 用法：node tools/probe-layered-attr.js <hwnd> [hwnd2 ...]   （0x40848 或十进制均可）
 // 输出：每窗一段——IsWindow / 类名 / EXSTYLE（标注 LAYERED、TRANSPARENT 位）/ GLWA 读数

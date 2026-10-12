@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：菜单弹出几何 13 用例，纯 node 无实例运行时需求，执行面在 run-ci.js
 // menu-layout.js 单测：覆盖四角/边缘/遮挡推离的边界情形（纯 node，直接跑）
 // 布局优先级：①贴桌宠左右侧翼（最高）②锚点右侧→左侧 ③与桌宠重叠垂直推上/下
 const { menuLayout } = require('../menu-layout');

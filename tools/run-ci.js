@@ -1,3 +1,4 @@
+// @runtime: none —— CI 强制层装置自身（parseCiItems 单一真源），执行面在 npm run ci
 // 出包闸门装置（票 11-U）：一条命令跑完 CI 强制层的全部纯逻辑件。
 // 为什么要有它：ci.yml 那批件的「强制」靠 GitHub Actions、只在 push 后跑，本仓无 remote ⇒
 // 那层从未被机器执行过一次（1.0.72 带着一条 CI 红出包并装机，见票 11-U / PITFALLS §91）。
@@ -48,10 +49,20 @@ function runOne(full) {
   });
 }
 
+// 解析 ci.yml 里的强制件清单（`run: node tools/xxx.js`，行首空白容忍；文件顶部注释里的
+// 文件名清单不带 run: 前缀，不会误抓）。出包闸门与运行时判据强制层（run-runtime-ci.js）
+// 共用本解析——清单解析全仓只此一份，禁止再写第二份（两份解析必然漂移）。
+function parseCiItems(yml) {
+  return [...yml.matchAll(/run:\s*node\s+(tools\/[A-Za-z0-9._-]+\.js)/g)].map((m) => m[1]);
+}
+
+module.exports = { parseCiItems };
+
+if (require.main !== module) return;
+
 (async () => {
   const yml = fs.readFileSync(ciPath, 'utf8');
-  // 只认步骤行 `run: node tools/xxx.js`（行首空白容忍）；文件顶部注释里的文件名清单不带 run: 前缀，不会误抓
-  const items = [...yml.matchAll(/run:\s*node\s+(tools\/[A-Za-z0-9._-]+\.js)/g)].map((m) => m[1]);
+  const items = parseCiItems(yml);
   if (!items.length) {
     console.error('脚本异常：ci.yml 里解析不到任何 `run: node tools/xxx.js` 步骤——清单解析失效，闸门不许放行');
     process.exit(1);

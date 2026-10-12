@@ -1,3 +1,4 @@
+// @runtime: self-host —— 需 Electron 运行时（spawn 独立探针 app 做三源对照），一次性定性探针非判据件
 // 只读三源对照探针（票 11-D 任务 2）：定性 11-C 复查假阴性的机制——
 //   (a) 裸 getLoginItemSettings() 与写入时带的 --autostart 不匹配 → 恒 false；
 //   (b) 同进程 set 之后立刻 get 的时序问题。

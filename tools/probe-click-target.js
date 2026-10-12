@@ -1,3 +1,4 @@
+// @runtime: installed —— WindowFromPoint 取证装机面点击归属（lib-container）；--click 注入真实点击，执行面走授权闸门
 // 「点不动」取证工具：回答「此刻光标处的点击会落到哪个窗口」，并可注入一次真实点击看应用有没有收到。
 // 用法：
 //   node tools/probe-click-target.js              # 只查：光标位置 → WindowFromPoint 的窗口/类名/矩形；并列出桌宠窗口对比

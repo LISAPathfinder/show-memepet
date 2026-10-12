@@ -1,3 +1,4 @@
+// @runtime: none —— SendInput 注入工具，无断言（装机轮授权闸门名单防误挂）
 // 用 SendInput 注入一次真实鼠标点击（比 mouse_event 更现代，行为更接近真手）。
 // 用法：node tools/inject-click.js <x> <y> [按住毫秒]
 // 为什么要按住毫秒：down/up 相隔微秒时，某些窗口只会把 up 送到页面（mousedown 丢失），

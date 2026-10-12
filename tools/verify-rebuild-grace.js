@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：重建宽限期 vm 回归（含行为级守卫），纯 node，执行面在 run-ci.js
 // 重建/首屏「命中区宽限期」纯逻辑回归（1.0.58 立件；1.0.59 票 11-J 任务 2 适配离散数组、
 // 任务 4 收口宽限∪生效窗口）
 //
@@ -11,8 +12,11 @@
 // 首次同步（petSyncAfterRebuild）那一次生效**——「重建后最多多吞 2.5s」的旧上限缩到首判一拍；
 // 常态出口不变：收到「总面积变大」的上报立刻收回，REBUILD_GRACE_MS 只兜「渲染端迟迟不上报」。
 //
-// 本件不复制实现：从 main.js 源码提取 PET_SIZE / PET_WINDOW_SIZE / visualSize / petVisualOffset /
-// petFallbackBox / boxesArea / graceEndsOnReport / petBoxInUse / graceJudgeBoxes 各段，在 vm 沙箱里
+// 本件不复制实现：几何与宽限判定七段（PET_SIZE / PET_WINDOW_SIZE / visualSize / petVisualOffset，
+// 票 12-A；petFallbackBox / boxesArea / graceEndsOnReport / graceJudgeBoxes，票 0a-3）自 core/geometry.js
+// **require 真函数**注入沙箱全局（改前根没有 core/ 或 core 缺该导出时，逐段回退 main.js 文本提取），
+// 仍从 main.js 提取的只有 petBoxInUse（读 petInteractiveBox 模块级状态 + petScale() 的 config）与
+// REBUILD_GRACE_MS/createPetWindow/bootApp/handleShowRequest 这些绑状态的行为体，在 vm 沙箱里
 // 注入状态后求值。断言里既有"该变宽"也有"该退出"，还有**正向对照**（提取不到新函数就红）——
 // 只写否定式的守卫会因为文件改名或读不到而永远绿（PITFALLS §77）。
 //
@@ -151,19 +155,27 @@ try {
   const src = fs.readFileSync(mainPath, 'utf8');
 
   // ---- 提取（正向对照：少了任何一段就说明实现被改名或删除）----
+  // 几何依赖四段（PET_SIZE / PET_WINDOW_SIZE / visualSize / petVisualOffset）自票 12-A 起真源在
+  // core/geometry.js：与被测 main.js 同根的 core 存在就 require 真函数，不存在（改前副本自证的根）
+  // 回退成从 main.js 文本提取。其余五段仍从 main.js 提取（本票不动它们的形态）。
+  const geoPath = path.join(path.dirname(mainPath), 'core', 'geometry.js');
+  const geo = fs.existsSync(geoPath) ? require(geoPath) : null;
+  // core 在位时七段走真源（require 的函数直接注入沙箱全局）；改前根回退成文本提取。
+  // petBoxInUse 永远抽 main.js——它读 petInteractiveBox 与 petScale()（模块级状态 + config），不纯。
+  const coreFn = (name, srcName) => (geo && typeof geo[name] === 'function' ? geo[name] : extractFn(src, srcName));
   const parts = {
-    petSize: extractConst(src, 'PET_SIZE'),
-    winSize: extractConst(src, 'PET_WINDOW_SIZE'),
-    visualSize: extractFn(src, 'visualSize'),
-    petVisualOffset: extractFn(src, 'petVisualOffset'),
-    petFallbackBox: extractFn(src, 'petFallbackBox'),
-    boxesArea: extractFn(src, 'boxesArea'),
-    graceEndsOnReport: extractFn(src, 'graceEndsOnReport'),
+    petSize: geo ? geo.PET_SIZE : extractConst(src, 'PET_SIZE'),
+    winSize: geo ? geo.PET_WINDOW_SIZE : extractConst(src, 'PET_WINDOW_SIZE'),
+    visualSize: coreFn('visualSize', 'visualSize'),
+    petVisualOffset: coreFn('petVisualOffset', 'petVisualOffset'),
+    petFallbackBox: coreFn('petFallbackBox', 'petFallbackBox'),
+    boxesArea: coreFn('boxesArea', 'boxesArea'),
+    graceEndsOnReport: coreFn('graceEndsOnReport', 'graceEndsOnReport'),
     petBoxInUse: extractFn(src, 'petBoxInUse'),
-    graceJudgeBoxes: extractFn(src, 'graceJudgeBoxes'),
+    graceJudgeBoxes: coreFn('graceJudgeBoxes', 'graceJudgeBoxes'),
   };
   const missing = Object.entries(parts).filter(([, v]) => !v).map(([k]) => k);
-  check('main.js 里能提取到全部所需定义', missing.length === 0, missing.length ? `缺 ${missing.join('/')}` : '9 段齐全');
+  check('所需定义全部在位（core 几何与宽限七段 + main.js 的 petBoxInUse）', missing.length === 0, missing.length ? `缺 ${missing.join('/')}` : `9 段齐全（${geo ? '7 段来自 core/geometry.js，petBoxInUse 与两段常量来自 main.js' : '改前根：全部从 main.js 文本提取'}）`);
   const GRACE = extractNumberConst(src, 'REBUILD_GRACE_MS');
   check('REBUILD_GRACE_MS 常量存在且是正数', typeof GRACE === 'number' && GRACE > 0, `值=${GRACE}`);
   check(
@@ -395,9 +407,12 @@ try {
     const writeQuit = writeAnchor >= 0 ? flat.indexOf('app.quit();', writeAnchor) : -1;
     const writeSeg = writeAnchor >= 0 && writeQuit > writeAnchor ? flat.slice(writeAnchor, writeQuit) : null;
     check(
-      '哨兵写端：立即退出分支在 app.quit() 前写显隐请求哨兵（writeFileSync + SHOW_REQUEST_NAME）',
-      !!writeSeg && writeSeg.includes('fs.writeFileSync') && writeSeg.includes('identity.SHOW_REQUEST_NAME'),
-      writeSeg ? '写端在位' : '删哨兵写（恢复 1.0.70 裸退出）即红——提权首实例将永远收不到双击'
+      '哨兵写端：立即退出分支在 app.quit() 前写显隐请求哨兵（writeFileAtomic + SHOW_REQUEST_NAME，禁裸 writeFileSync）',
+      !!writeSeg && writeSeg.includes('writeFileAtomic(') && !writeSeg.includes('fs.writeFileSync(') &&
+        writeSeg.includes('identity.SHOW_REQUEST_NAME'),
+      writeSeg
+        ? '写端在位且走原子写（11-V 任务 4：裸 writeFileSync 在覆盖安装强杀实例时可能被截断，下次启动读成坏文件）'
+        : '删哨兵写（恢复 1.0.70 裸退出）即红——提权首实例将永远收不到双击'
     );
     const bootBody = extractFn(src, 'bootApp');
     check(
@@ -477,17 +492,26 @@ try {
     petRebuildGraceUntil: 0,
   };
   ctx.Date = { now: () => ctx.__now };
+  if (geo) {
+    // core 真源：几何与宽限判定七段作沙箱全局注入（真函数，不是文本切片）
+    Object.assign(ctx, {
+      PET_SIZE: parts.petSize,
+      PET_WINDOW_SIZE: parts.winSize,
+      visualSize: parts.visualSize,
+      petVisualOffset: parts.petVisualOffset,
+      petFallbackBox: parts.petFallbackBox,
+      boxesArea: parts.boxesArea,
+      graceEndsOnReport: parts.graceEndsOnReport,
+      graceJudgeBoxes: parts.graceJudgeBoxes,
+    });
+  }
   vm.createContext(ctx);
+  const textDecls = geo
+    ? [parts.petBoxInUse] // 只有它仍需要把 main.js 的函数体拼进沙箱
+    : [parts.petSize, parts.winSize, parts.visualSize, parts.petVisualOffset, parts.petFallbackBox,
+       parts.boxesArea, parts.graceEndsOnReport, parts.petBoxInUse, parts.graceJudgeBoxes];
   const boot = [
-    parts.petSize,
-    parts.winSize,
-    parts.visualSize,
-    parts.petVisualOffset,
-    parts.petFallbackBox,
-    parts.boxesArea,
-    parts.graceEndsOnReport,
-    parts.petBoxInUse,
-    parts.graceJudgeBoxes,
+    ...textDecls,
     'function petScale() { return __scale; }',
     'function boxNow() { petInteractiveBox = __box; petRebuildGraceUntil = __graceUntil; return petBoxInUse(); }',
     'function judgeNow(report) { petInteractiveBox = report; return graceJudgeBoxes(report, __scale); }',

@@ -1,18 +1,22 @@
+// @runtime: ci —— CI 强制层判据件：命中区判据 vm 回归，纯 node，执行面在 run-ci.js
 // 「被吞点击」判据件（票 11-J 任务 1，2026-10-05；纯 node 零依赖，进 CI）
 //
 // 要防的故障：桌宠把本该给桌面的点击吃掉——透明空隙与元素外侧的余量环都算「可交互」，
 // 点在其上表现为「什么都没发生」（用户现场：同一位置连点 10 次全被 pet-root 吞，
 // 全天 27 次盒外被吞；吞点击面积达元素真实面积的 2.0 倍）。
 //
-// 本件不复制实现：从 renderer/pet.js 提取 interactiveBox()（可交互区真源）与 BOX_PAD，
-// 从 main.js 提取命中判定（1.0.59 起为具名 pointInBoxes；更早版本回退提取
-// syncPetPassThrough 里的内联 inside 段）与 JITTER_PAD，在桩 DOM 上喂
-// 现场 3 的真实元素矩形（隔离实例 scale=1 空闲态离线实测），断言：
+// 本件不复制实现：从 renderer/pet.js 提取 interactiveBox()（可交互区真源），BOX_PAD 自票 0a-2 起
+// require core/interactive-box.js 取数值（改前根无 core/ 时回退从 pet.js 提取），命中判定
+// require core/geometry.js 的 pointInBoxes（票 12-A 起为真源；被测根无 core/ 时回退从 main.js
+// 提取，1.0.59 前是 syncPetPassThrough 里的内联 inside 段），JITTER_PAD 仍从 main.js 提取，在桩
+// DOM 上喂现场 3 的真实元素矩形（隔离实例 scale=1 空闲态离线实测），断言：
 //   ① 各元素本体上的点判「区内」；
 //   ② 两个元素之间的透明空隙点判「区外」（改前语义在这里红——判别性所在）；
 //   ③ 上报盒外 ≥17px 的点判「区外」；
 //   ④ 正向对照：#pet-face 本体必须判「区内」（防「为了放行把桌宠也点不中了」）；
 //   ⑤ 量化红线：吞点击区域（上报盒再套主进程余量后的并集）÷ 元素真实面积 ≤ 1.2。
+//   ⑥ JITTER_PAD 边界点对（票 12-A 补）：距脸盒右缘「恰好 =JITTER_PAD」与「+1px」两点，一内一外，
+//      钉住命中判定的余量维度（原夹具在 pad 上无点：`+ pad` 改成 `+ pad * 2` 新旧两版件同绿）。
 //
 // 判别性自证（票面验收 ★a）：对 `git show 6df494f:…` 的改前副本（renderer/pet.js + main.js
 // 按同布局放进一个目录后把该目录当 argv[2] 传入）→ 必须 exit 1（② 与 ⑤ 都过不了旧语义）；
@@ -127,29 +131,41 @@ try {
   const mainSrc = fs.readFileSync(mainPath, 'utf8');
 
   // ---- 提取（正向对照：缺任一段就红，防「读不到打绿灯」）----
+  // BOX_PAD 真源自票 0a-2 起在 core/interactive-box.js（require 数值），改前根没有 core/ 时
+  // 回退从 pet.js 提取——interactiveBox 的桩求值仍需要一个 BOX_PAD 绑定，两条路都给齐。
+  const boxCorePath = path.join(root, 'core', 'interactive-box.js');
+  const boxCore = fs.existsSync(boxCorePath) ? require(boxCorePath) : null;
+  const boxPad = boxCore ? boxCore.BOX_PAD : extractNumberConst(petSrc, 'BOX_PAD');
   const boxFn = extractFn(petSrc, 'interactiveBox');
-  const boxPad = extractNumberConst(petSrc, 'BOX_PAD');
   check(
-    'renderer/pet.js 提取到 interactiveBox() 与 BOX_PAD（可交互区真源在位）',
-    !!boxFn && boxPad !== null,
+    '提取到 interactiveBox() 与 BOX_PAD（可交互区真源在位，BOX_PAD 取自' + (boxCore ? 'core/interactive-box.js' : 'pet.js（改前根）') + '）',
+    !!boxFn && boxPad !== null && boxPad !== undefined,
     `BOX_PAD=${boxPad}`
   );
 
-  // 命中判定：优先具名 pointInBoxes（1.0.59 起），否则回退内联段（syncPetPassThrough 的
-  // `const JITTER_PAD = …; const inside = …;`，6df494f 及更早形态）
-  const named = extractFn(mainSrc, 'pointInBoxes');
+  // 命中判定：真源是 core/geometry.js 的具名 pointInBoxes（票 12-A 从 main.js 搬出），直接
+  // require 真函数；被测根没有 core/（改前副本自证，见文件头 ★a）时回退按旧形态提取——
+  // 优先 main.js 具名 pointInBoxes，再回退 syncPetPassThrough 的内联段（6df494f 及更早形态）。
+  const geoPath = path.join(root, 'core', 'geometry.js');
+  const geo = fs.existsSync(geoPath) ? require(geoPath) : null;
+  if (geo && typeof geo.pointInBoxes !== 'function') {
+    throw new Error(`core/geometry.js 导出的 pointInBoxes 不是函数（真源改名或签名变了）`);
+  }
+  const named = geo ? '__from_core__' : extractFn(mainSrc, 'pointInBoxes');
   const namedPad = named ? extractNumberConst(mainSrc, 'JITTER_PAD') : null;
   const inlineM = !named ? mainSrc.match(/const JITTER_PAD = (\d+);[\s\S]{0,200}?const inside =([\s\S]*?);/) : null;
   check(
-    'main.js 提取到命中判定段（具名 pointInBoxes 或 syncPetPassThrough 内联段）+ JITTER_PAD',
+    '提取到命中判定段（core/geometry.js 的 pointInBoxes，改前根回退 main.js 具名/内联段）+ JITTER_PAD',
     !!named ? namedPad !== null : !!inlineM,
-    named ? `具名 pointInBoxes，JITTER_PAD=${namedPad}` : inlineM ? `内联段，JITTER_PAD=${inlineM[1]}` : '两式都没提不到'
+    named ? `${geo ? 'core/geometry.js require' : 'main.js 具名 pointInBoxes'}，JITTER_PAD=${namedPad}` : inlineM ? `内联段，JITTER_PAD=${inlineM[1]}` : '两式都没提不到'
   );
 
   const jitterPad = named ? namedPad : inlineM ? Number(inlineM[1]) : null;
   let hitTest = null;
   if (named && namedPad !== null) {
-    hitTest = new Function('rects', 'x', 'y', `${named}\nreturn pointInBoxes(rects, x, y, ${namedPad});`);
+    hitTest = geo
+      ? (rects, x, y) => geo.pointInBoxes(rects, x, y, namedPad)
+      : new Function('rects', 'x', 'y', `${named}\nreturn pointInBoxes(rects, x, y, ${namedPad});`);
   } else if (inlineM) {
     // 旧 main 消费的是「单一包围盒」：数组先并成包围盒再进旧表达式（这正是被考的旧语义）
     const expr = inlineM[2];
@@ -157,8 +173,8 @@ try {
   }
 
   // ---- 跑渲染端真源（桩 DOM：现场 3 矩形 + 三个隐藏元素）----
-  // interactiveBox 的函数体引用两个模块级常量：BOX_PAD（数值真源，从源码提取注入）与
-  // INTERACTIVE_SELECTOR（桩 querySelectorAll 不看选择器，但标识符必须在场——同样提取注入，
+  // interactiveBox 的函数体引用两个模块级常量：BOX_PAD（数值真源 core/interactive-box.js，本件取
+  // require 到的值注入；改前根回退源码提取）与 INTERACTIVE_SELECTOR（桩 querySelectorAll 不看选择器，
   // 提取不到说明实现改形，判据该红）
   let reported = null;
   if (boxFn && boxPad !== null) {
@@ -226,6 +242,25 @@ try {
 
     // ⑤ 量化红线：吞点击区域 ≤ 元素真实面积的 1.2 倍（票 11-J 任务 3 目标；改前 2.02×）
     check('⑤ 吞点击面积 ÷ 元素真实面积 ≤ 1.2', ratio <= 1.2, `实测 ${ratio.toFixed(3)}×`);
+
+    // ⑥ JITTER_PAD 边界点对（票 12-A 补）：把 pointInBoxes 的余量维度钉住。红法 R1 实测原夹具
+    //   在 pad 上无点——`+ pad` 改成 `+ pad * 2` 后新旧两版件逐字节同绿（对照组读数一致），
+    //   因为 ①②③④ 用的点距元素都 ≥1px 或 ≤ 本体中心，放大余量看不出来。
+    //   两点按 jitterPad 取值（不按字面量 1/2），产品有意调 JITTER_PAD 时跟着平移、不误伤；
+    //   而实现里把 pad 悄悄加大/缩小（本刀的突变形态）必红其中一侧。
+    const faceR = rects[0]; // 桩里 rects 顺序 == ELEMENTS 顺序，[0] 是脸
+    const padIn = { x: faceR.x + faceR.width + jitterPad, y: faceR.y + faceR.height / 2 };
+    const padOut = { x: faceR.x + faceR.width + jitterPad + 1, y: faceR.y + faceR.height / 2 };
+    check(
+      `⑥ 右缘外 ${jitterPad}px（== JITTER_PAD）判「区内」（余量下界不被缩小）`,
+      hitTest(rects, padIn.x, padIn.y),
+      `点 ${padIn.x},${padIn.y}`
+    );
+    check(
+      `⑥ 右缘外 ${jitterPad + 1}px（> JITTER_PAD）判「区外」（余量不被放大）`,
+      !hitTest(rects, padOut.x, padOut.y),
+      `点 ${padOut.x},${padOut.y}`
+    );
   } else {
     check('命中判定与上报任缺其一，无法继续断言', false, '提取失败见上');
   }

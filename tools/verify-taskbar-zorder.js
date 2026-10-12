@@ -1,3 +1,4 @@
+// @runtime: installed —— 读真实 z 链是否压任务栏+装机日志（lib-container），不碰调试端口
 // 检查桌宠窗口此刻在 z 链上是否压着任务栏（Shell_TrayWnd）：
 // 「桌宠被任务栏盖住」的硬证据，也是 PITFALLS §60（周期重申置顶）的验收工具。
 // 用法：node tools/verify-taskbar-zorder.js

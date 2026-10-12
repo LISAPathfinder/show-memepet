@@ -1,3 +1,4 @@
+// @runtime: shared —— 真实光标+原生穿透位取样，需 dev 隔离实例与占用自检（lib-occupancy）
 // 「离开辖区 → 转穿透」延迟分布量测（票 11-J 任务 4 的量化验收件；铁律 3：真断言 + 非零退出码）。
 //
 // 背景：1.0.58 真机全天日志实测（现场 2，样本 260）离开→穿透 p50=777ms / p90=2480ms / max=9592ms
@@ -141,7 +142,8 @@ const pct = (arr, q) => {
   //   正确行为——旧口径把它算进 allMax≤2000 是物理不可达，整件常年假红（校验轮④续）。
   const FAST_PAD = 8;
   const FAST_EDGE = FAST_PAD + 3 + 2; // 13：摆幅极值外仍有 2px 余量
-  // 手抄 main.js syncPetPassThrough 判定层的 JITTER_PAD（:2523，票 11-J 起 =1）。
+  // 手抄 main.js syncPetPassThrough 判定层的 JITTER_PAD（票 11-J 起 =1；行号随 main.js 增删漂，
+  // 本票期间 :2523→:2578，锚定靠函数名不靠行号）。
   // 同步义务与 verify-pass-hold 相同：主进程改这个值必须同步这里，否则 C 组「恒删失」
   // 前提断裂——C 组正向对照断言就是为此存在的（红法②）。
   const JITTER_PAD = 1;

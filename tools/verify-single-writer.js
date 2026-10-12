@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：穿透单写入者源码守卫，纯 node，执行面在 run-ci.js
 // 穿透「单写入者」静态守卫（1.0.57 加固轮；纯 node 零依赖，CI 可跑）：
 //   断言渲染端在源码层面已经没有任何途径能写 WS_EX_TRANSPARENT，而不是只靠"约定"。
 //   运行时侧的同族判据 = tools/verify-passthrough-desync.js 的断言 A/B。

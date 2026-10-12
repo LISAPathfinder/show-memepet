@@ -1,3 +1,4 @@
+// @runtime: shared —— 枚举实例窗口，attach 9229/9333（lib-occupancy 自检）
 // 只读探针：查当前主进程里有哪些窗口、状态如何
 import occ from './lib-occupancy.js';
 occ.warnBlockingInstances(); // 测量件只警告不拦（票 11-G 任务 4）

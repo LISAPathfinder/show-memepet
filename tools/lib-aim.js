@@ -1,3 +1,4 @@
+// @runtime: none —— 共享库（瞄点+落点前置），被判据件 require，不独立执行
 // 瞄点共享库（票 11-S 任务 2）：verify-click-after / verify-flee-interaction / verify-hide-show-input
 // 三件运行时判据的瞄点基准换轨 + 「落点必须在形象上」前置断言。
 //
@@ -10,57 +11,51 @@
 // 没有这条，换轨只是把一次巧合改成下一次会漂移的巧合。红法两向：瞄点退回几何中心必须 exit 3；
 // 正常跑通时与 probe-click-target 对账落点归属。
 //
-// 兜底盒/内容矩形不经手抄：从 main.js 源码定界提取 petFallbackBox / petContentRect 的同源公式
-// （visualSize / petVisualOffset / contentSize / petContentOffset + PET_* 常量）在 vm 里求值，
-// main.js 改公式时这里自动跟随（防工具侧公式漂移；提取失败 = 前置不满足）。
+// 兜底盒/内容矩形不经手抄，也不在文本里抽函数体：真源是 core/geometry.js（票 12-A 搬内容/视觉两族
+// 与 pointInBoxes，票 0a-3 搬 petFallbackBox / boxesArea / graceEndsOnReport / graceJudgeBoxes），
+// 本件直接 require 真函数——产品改公式这里自动跟随，而「main.js 加一个顶层变量就把本件搞红」
+// 那一类脆弱（PITFALLS 记过同型事故）从此不再存在。require 失败/导出缺项 = 前置不满足（exit 3）。
 const fs = require('fs');
 const path = require('path');
-const vm = require('vm');
+
+// §96（2026-10-10 票）：require cache 按解析路径字符串大小写分副本——CDP 表达式里 require 配置模块
+// 必须用绝对路径，且大小写与产品解析一致，否则写/读落在第二个副本上（petScale 读错 ⇒ 瞄点错，
+// 下游判据件带着错瞄点自洽假绿，是最毒的通道）。只能 realpathSync.native（普通 realpath 不规范
+// 化盘符大小写，等于没修）；native 失败的兜底必须显式（盘符大写 + 明打），不许静默用原始路径。
+const ROOT = (() => {
+  const r = path.resolve(__dirname, '..');
+  try { return fs.realpathSync.native(r); } catch (e) {
+    const fb = r.replace(/^([a-zA-Z]):/, (d) => d.toUpperCase()); // 回调收到的是全匹配（含冒号），不能再加 ':'
+    console.error(`⚠ lib-aim: realpathSync.native 失败（${e.message}）——已显式退回「盘符大写」兜底：${fb}`);
+    return fb;
+  }
+})();
+const CFG_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))})`;
 
 class PreconditionError extends Error {}
 
-// 从 main.js 提取矩形派生公式（括号配对，同 verify-unlock-position 先例）
+// 矩形派生公式与兜底盒的真源都是 core/geometry.js（票 12-A 搬内容/视觉两族，票 0a-3 搬兜底盒与宽限
+// 判定）：本件全走 require 真函数，**不再抽 main.js 函数体进 vm**——这是全仓最脆的一层里第一个
+// 彻底脱离文本抽取的共用库。scale 钳制在本地用 core 的上下限常量实现，保持与 main.js petScale()
+// 同语义（config 读取仍留给调用方——scale 值经主进程 CDP 读回）。
 function loadRectMath(repoRoot) {
-  const src = fs.readFileSync(path.join(repoRoot, 'main.js'), 'utf8').replace(/\r/g, '');
-  const pickConst = (re, name) => {
-    const m = src.match(re);
-    if (!m) throw new PreconditionError(`main.js 里提取不到 ${name}（源码结构变了？）`);
-    return m[0];
+  const geoPath = path.join(repoRoot, 'core', 'geometry.js');
+  let geo;
+  try {
+    geo = require(geoPath);
+  } catch (e) {
+    throw new PreconditionError(`require('${geoPath}') 失败（${(e && e.message) || e}）——core/geometry.js 是几何公式真源`);
+  }
+  // 正向对照：导出必须齐（改名/删函数在这里点名，不许 require 到半个对象照样跑）
+  const NEED = ['PET_SIZE', 'PET_SCALE_MIN', 'PET_SCALE_MAX', 'PET_WINDOW_SIZE', 'PET_CONTENT_HEIGHT',
+    'visualSize', 'petVisualOffset', 'contentSize', 'petContentOffset', 'petContentRect', 'petFallbackBox'];
+  const missing = NEED.filter((k) => geo[k] === undefined);
+  if (missing.length) throw new PreconditionError(`core/geometry.js 导出缺 ${missing.join('/')}（改名或删除要同步本件）`);
+  const clampPetScale = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(geo.PET_SCALE_MAX, Math.max(geo.PET_SCALE_MIN, n)) : 1;
   };
-  const pickFn = (name) => {
-    const i = src.indexOf(`function ${name}(`);
-    if (i < 0) throw new PreconditionError(`main.js 里提取不到 function ${name}（源码结构变了？）`);
-    let depth = 0;
-    const open = src.indexOf('{', i);
-    for (let k = open; k < src.length; k++) {
-      if (src[k] === '{') depth++;
-      else if (src[k] === '}') {
-        depth--;
-        if (depth === 0) return src.slice(i, k + 1);
-      }
-    }
-    throw new PreconditionError(`main.js 里 function ${name} 括号配平失败`);
-  };
-  // clampPetScale 与 main.js petScale() 同语义（钳制常量用提取出的 PET_SCALE_MIN/MAX，不手抄；
-  // config 读取留给调用方——scale 值经主进程 CDP 读回）
-  const decls = [
-    pickConst(/const PET_SIZE = \{[^}]*\};/, 'PET_SIZE'),
-    pickConst(/const PET_SCALE_MIN = [0-9.]+;/, 'PET_SCALE_MIN'),
-    pickConst(/const PET_SCALE_MAX = [0-9.]+;/, 'PET_SCALE_MAX'),
-    pickConst(/const PET_WINDOW_SIZE = \{[^}]*\};/, 'PET_WINDOW_SIZE'),
-    pickConst(/const PET_CONTENT_HEIGHT = [0-9.]+;/, 'PET_CONTENT_HEIGHT'),
-    pickFn('visualSize'),
-    pickFn('petVisualOffset'),
-    pickFn('petFallbackBox'),
-    pickFn('contentSize'),
-    pickFn('petContentOffset'),
-    pickFn('petContentRect'),
-    'function clampPetScale(v) { const n = Number(v); return Number.isFinite(n) ? Math.min(PET_SCALE_MAX, Math.max(PET_SCALE_MIN, n)) : 1; }',
-  ].join('\n');
-  const sandbox = {};
-  vm.createContext(sandbox);
-  vm.runInContext(decls, sandbox, { filename: 'main.js[rectmath]' });
-  return sandbox;
+  return Object.assign({}, geo, { clampPetScale });
 }
 
 // 主进程侧一次读全：窗口 bounds + 可见性 + petScale 配置值（找不到窗 = 前置不满足）
@@ -70,7 +65,7 @@ const PET_INFO_EXPR = `
     const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
     if (!w) return JSON.stringify({ error: 'pet-window-not-found' });
     const b = w.getBounds();
-    const scaleCfg = process.mainModule.require('./config').get('petScale');
+    const scaleCfg = ${CFG_REQ}.get('petScale');
     return JSON.stringify({ x: b.x, y: b.y, w: b.width, h: b.height, visible: w.isVisible(), scaleCfg });
   })()`;
 

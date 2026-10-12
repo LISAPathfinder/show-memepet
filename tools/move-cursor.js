@@ -1,3 +1,4 @@
+// @runtime: none —— SetCursorPos 光标移动工具，无断言（装机轮授权闸门名单防误挂）
 // 一次性把光标移到指定坐标（用于配合 probe-window-style 读「光标在桌宠身上」时的真实样式）
 // 用法：node tools/move-cursor.js <x> <y>
 const koffi = require('koffi');

@@ -1,3 +1,4 @@
+// @runtime: self-launch —— 全量占用自检后自起 dev 实例造窗判 petCovered alpha，独占场地先行
 // petCovered 按 alpha 判定（票 5）的三窗回归：koffi 造三种分层窗压在 dev 桌宠上，断言重申链路的反应。
 // 判据来源：PITFALLS §61 子坑 4（★3/★4 两组一手机测）。
 // 用例（自包含：自己起 dev 实例、隔离应用数据根与 Chromium userData、盯实例自己的日志；

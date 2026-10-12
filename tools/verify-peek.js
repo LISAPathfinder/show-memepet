@@ -1,3 +1,4 @@
+// @runtime: shared —— 右键让路穿透端到端 6 断言，attach 9229/9333（CDP 注入右键）
 // 右键让路穿透（peek）回归件（真断言；1.0.72 内按用户裁决从「置底」改为「变暗变透明」）：
 //   前置① 光标压上形象上报盒中心 ≤800ms 翻成可交互（轮询活着，避免「因为没交互能力而全绿」的空测）；
 //   A 触发后穿透位（WS_EX_TRANSPARENT）置上 —— 整窗点击穿透（终判层=原生样式位，非记账）；
@@ -23,6 +24,19 @@
 //         3 = 前置不满足（占用 / 端口不通 / ① 预期态读不到）。
 const fs = require('fs');
 const path = require('path');
+
+// §96（2026-10-10 票）：CDP 表达式 require 配置/身份模块必须用绝对路径（只能 realpathSync.native
+// 规范化盘符大小写），否则与产品分裂成两个缓存副本。native 失败兜底显式（盘符大写 + 明打）。
+const ROOT = (() => {
+  const r = path.resolve(__dirname, '..');
+  try { return fs.realpathSync.native(r); } catch (e) {
+    const fb = r.replace(/^([a-zA-Z]):/, (d) => d.toUpperCase()); // 回调收到的是全匹配（含冒号），不能再加 ':'
+    console.error(`⚠ verify-peek: realpathSync.native 失败（${e.message}）——已显式退回「盘符大写」兜底：${fb}`);
+    return fb;
+  }
+})();
+const CFG_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))})`;
+const ID_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'identity.js'))})`;
 const koffi = require('koffi');
 const { LOG_CANDIDATES } = require('../identity');
 require('./lib-occupancy').assertNoBlockingInstances('verify-peek.js');
@@ -130,8 +144,8 @@ function connect(port, pick) {
 
   // 隔离实例的日志在它自己的数据目录（仓库 data/ 是别的实例的），经 CDP 读真实路径
   try {
-    const dir = await mainProc.evaluate(`process.mainModule.require('./config').DATA_DIR`);
-    const name = await mainProc.evaluate(`process.mainModule.require('./identity').LOG_NAME`);
+    const dir = await mainProc.evaluate(`${CFG_REQ}.DATA_DIR`);
+    const name = await mainProc.evaluate(`${ID_REQ}.LOG_NAME`);
     if (dir && name && fs.existsSync(path.join(dir, name))) LOG_PATH = path.join(dir, name);
   } catch {}
 

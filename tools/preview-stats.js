@@ -1,3 +1,4 @@
+// @runtime: self-host —— 件自身即 Electron 宿主（electron tools/preview-stats.js）的视觉预览，非判据件
 // 临时预览：用 Electron 窗口加载 stats.html，注入 mock 数据并截图（轻量替代浏览器截图）
 // 用法: electron tools/preview-stats.js <输出png>
 const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron');

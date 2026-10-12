@@ -1,3 +1,4 @@
+// @runtime: shared —— 点击打断让开回归（需 cursorFleeEnabled=true），attach 调试端口+真实点击
 // 验证「点击互动期间不触发让开 + 点击打断 5 秒计时」（dev 实例带 --inspect 启动时用）：
 //   A) 按住左键 8 秒（超过 5 秒阈值）→ 期间不得出现「让开」；松开后重新计时，约 5 秒后应让开
 //   B) 每 2 秒点一下、连点 5 次（共约 10 秒）→ 期间不得出现「让开」（每次点击都清零计时）
@@ -22,14 +23,18 @@ const MOUSEINPUT = koffi.struct('MOUSEINPUT', {
 });
 const INPUT = koffi.struct('INPUT', { type: 'uint32', mi: MOUSEINPUT });
 const SendInput = user32.func('SendInput', 'uint32', ['uint32', koffi.pointer(INPUT), 'int']);
-// 迁移期双认（票 11-A）：按候选序取第一个存在的日志文件（改名过渡期旧版可能还在写旧名）；
-// 都不存在时回落当前写用名——保持旧行为（读不存在路径 = 空读数），不在此发明新失败模式
+// 日志定位：SHOWCASE_DATA_DIR 优先——隔离实例的日志落在数据根，起实例与跑件必须读同一个
+// 数据根（§89 根因 3 同族修正，对齐 verify-flee 的解析）；仓库 data/ 只是 dev 回落。
+// 候选序双认（票 11-A）；都不存在时回落第一候选（保持旧行为：读不存在路径 = 空读数）。
 const LOG = (() => {
-  for (const name of LOG_CANDIDATES) {
-    const p = path.join(__dirname, '..', 'data', name);
-    try { if (fs.statSync(p).isFile()) return p; } catch {}
+  const roots = [process.env.SHOWCASE_DATA_DIR, path.join(__dirname, '..', 'data')].filter(Boolean);
+  for (const root of roots) {
+    for (const name of LOG_CANDIDATES) {
+      const p = path.join(root, name);
+      try { if (fs.statSync(p).isFile()) return p; } catch {}
+    }
   }
-  return path.join(__dirname, '..', 'data', LOG_CANDIDATES[0]);
+  return path.join(roots[0], LOG_CANDIDATES[0]);
 })();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const lines = () => (fs.existsSync(LOG) ? fs.readFileSync(LOG, 'utf8').split('\n') : []);

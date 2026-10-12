@@ -1,3 +1,4 @@
+// @runtime: shared —— 让开端到端 4 断言（需 cursorFleeEnabled=true），attach 调试端口+真实光标
 // 验证「鼠标停在桌宠身上超过 5 秒 → 自动让开」（端到端，票 11-O 四断言版）：
 //   真实光标停到桌宠命中区中心 → 等 CURSOR_FLEE_MS → 断言：
 //   ① 日志出现「让开」决策行（并解析方向与 movedPx）；
@@ -24,6 +25,18 @@
 // 把光标按回命中点，但人手拖着晃仍可能拉长触发时间，重跑即可。
 const fs = require('fs');
 const path = require('path');
+
+// §96（2026-10-10 票）：CDP 表达式 require 配置必须用绝对路径（大小写与产品解析一致），
+// 否则与产品 config 分裂成两个缓存副本——装置写的开关产品读不到。只能 realpathSync.native。
+const ROOT = (() => {
+  const r = path.resolve(__dirname, '..');
+  try { return fs.realpathSync.native(r); } catch (e) {
+    const fb = r.replace(/^([a-zA-Z]):/, (d) => d.toUpperCase()); // 回调收到的是全匹配（含冒号），不能再加 ':'
+    console.error(`⚠ verify-flee: realpathSync.native 失败（${e.message}）——已显式退回「盘符大写」兜底：${fb}`);
+    return fb;
+  }
+})();
+const CFG_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))})`;
 
 const koffi = require('koffi');
 const { LOG_CANDIDATES } = require('../identity');
@@ -97,7 +110,7 @@ async function main() {
 
   // 前置：cursorFleeEnabled 必须为 true（本件测的就是这条路径，false=白跑）
   const cfg = JSON.parse(
-    await mainProc.evaluate(`(() => { const c = process.mainModule.require('./config'); return JSON.stringify({ flee: c.get('cursorFleeEnabled'), scale: c.get('petScale') }); })()`)
+    await mainProc.evaluate(`(() => { const c = ${CFG_REQ}; return JSON.stringify({ flee: c.get('cursorFleeEnabled'), scale: c.get('petScale') }); })()`)
   );
   if (!cfg.flee) {
     console.error('前置不满足（exit 3）：cursorFleeEnabled=false——本件必须留着让开开关跑（这是被测路径本身）');

@@ -1,3 +1,4 @@
+// @runtime: installed —— 枚举真实桌面窗口（Alt-Tab 候选面，§67 装机回归取证），不碰调试端口
 // 「Alt-Tab / 任务视图会列出哪些窗口」侦察件（1.0.31 摘掉锚点窗 WS_EX_TOOLWINDOW 后的
 // 回归排查，PITFALLS §67）：按 shell 的近似过滤条件枚举顶层窗口——
 //   可见 && 非 WS_EX_TOOLWINDOW && 未被 DWM cloak

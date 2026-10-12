@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：上报节奏 vm 回归，纯 node，执行面在 run-ci.js
 // 可交互盒上报节奏判据（票 11-L / 11-J 任务 2b，铁律 3：真断言 + 非零退出码）。
 //
 // 背景：主进程判定用的 petInteractiveBox 靠渲染端上报刷新，2b 前唯一常态驱动是 1s 定时器——
@@ -5,9 +6,14 @@
 // 2b 改造：rAF 每帧驱动「变化才上报」，比对键 3px 量化（漂浮连续漂移不上报，离散突变一帧即报），
 // 1s 定时器兜底 + onReportBox/onPing 点名保留。
 //
-// 量法：vm 提取 renderer/pet.js 的 interactiveBox / boxSignature / reportInteractiveBox（含
-// BOX_PAD/BOX_EPSILON/INTERACTIVE_SELECTOR/lastBoxSig），注入可控 DOM 桩（元素 rect 可逐帧改），
-// 断言：首报恰好一次、静止/量化内漂移零 IPC、量化外漂移与显隐必报、rAF 循环与兜底通道在位。
+// 量法：`BOX_PAD` / `BOX_EPSILON` / `boxSignature` 自票 0a-2 起真源在 core/interactive-box.js，
+// 本件 **require 真函数**（纯 node 可载，见 core 纯度闸）；仍从 renderer/pet.js 定界提取的是
+// DOM/IPC 绑的那两半——`interactiveBox`（querySelectorAll/getBoundingClientRect/drag/glass）与
+// `reportInteractiveBox`（window.petAPI + 模块级 lastBoxSig 去重态），加上 INTERACTIVE_SELECTOR。
+// 提取件注入可控 DOM 桩（元素 rect 可逐帧改），断言：首报恰好一次、静止/量化内漂移零 IPC、
+// 量化外漂移与显隐必报、rAF 循环与兜底通道在位，另钉一条**加载面正向对照**（pet.html 必须先
+// 于 pet.js 加载 core 那个文件——渲染端无 CommonJS，顺序反了或摘掉标签都是整页 SyntaxError/
+// ReferenceError，静态层看不见，只有这条与运行时轮拦得住）。
 //
 // 用法：node tools/verify-box-cadence.js [仓库根，默认 cwd]
 // 退出码：0 = 断言全绿；1 = 断言失败（脚本异常也落 1）；3 = 前置不满足（提取不到）。
@@ -41,12 +47,23 @@ function extractConst(name) {
   const m = src.match(new RegExp(`const ${name} = ([^;\\n]+);`));
   return m ? `const ${name} = ${m[1]};` : null;
 }
+// 纯的三段走 require 真源（core/interactive-box.js，票 0a-2）：缺文件或缺导出＝前置不满足（exit 3），
+// 不许「拿不到就当量化不存在」往下跑。
+const boxPath = path.join(root, 'core', 'interactive-box.js');
+if (!fs.existsSync(boxPath)) {
+  console.error('前置不满足（exit 3）：core/interactive-box.js 不存在于 ' + boxPath + '（BOX_PAD/BOX_EPSILON/boxSignature 真源）');
+  process.exit(3);
+}
+const boxCore = require(boxPath);
+const coreMissing = ['BOX_PAD', 'BOX_EPSILON', 'boxSignature'].filter((k) => boxCore[k] === undefined);
+if (coreMissing.length) {
+  console.error(`前置不满足（exit 3）：core/interactive-box.js 导出缺 ${coreMissing.join('/')}（改名或删除要同步本件）`);
+  process.exit(3);
+}
+// DOM/IPC 绑的两半仍从 pet.js 定界提取
 const parts = {
   sel: extractConst('INTERACTIVE_SELECTOR'),
-  pad: extractConst('BOX_PAD'),
-  eps: extractConst('BOX_EPSILON'),
   iBox: extractFn('interactiveBox'),
-  sig: extractFn('boxSignature'),
   rep: extractFn('reportInteractiveBox'),
 };
 const missing = Object.entries(parts).filter(([, v]) => !v).map(([k]) => k);
@@ -89,10 +106,14 @@ function buildVm(elements, opts = {}) {
       return timers.length;
     },
     clearInterval: () => {},
+    // 纯的三段从 core 真源注入沙箱全局（不是把 pet.js 的 const 文本拼进去跑）
+    BOX_PAD: boxCore.BOX_PAD,
+    BOX_EPSILON: boxCore.BOX_EPSILON,
+    boxSignature: boxCore.boxSignature,
   };
   vm.createContext(sandbox);
   vm.runInContext(
-    [parts.sel, parts.pad, parts.eps, 'let lastBoxSig = \'\';', parts.iBox, parts.sig, parts.rep].join('\n'),
+    [parts.sel, 'let lastBoxSig = \'\';', parts.iBox, parts.rep].join('\n'),
     sandbox,
     { filename: 'renderer/pet.js[vm]' }
   );
@@ -191,7 +212,17 @@ console.log('场景 6：rAF 循环与兜底通道（源码级）');
     'rAF 可用性守卫在位');
   assert(/setInterval\(reportInteractiveBox, 1000\);/.test(src), '1s 定时器兜底保留');
   assert(/onReportBox\(\(\) => reportInteractiveBox\(\)\)/.test(src), '主进程点名通道保留');
-  assert(/const BOX_EPSILON = 3;/.test(src), '量化容差 3px（漂浮 ±3px 不误报）');
+  assert(boxCore.BOX_EPSILON === 3, '量化容差 3px（真源 core/interactive-box.js，漂浮 ±3px 不误报）', `BOX_EPSILON=${boxCore.BOX_EPSILON}`);
+  assert(boxCore.BOX_PAD === 2, '上报盒余量 2px（同文件；6→2 是票 11-J 任务 3 的实算结论）', `BOX_PAD=${boxCore.BOX_PAD}`);
+  // 加载面正向对照：pet.html 必须**先于 pet.js** 加载 core 那个文件——渲染端没有 CommonJS，
+  // 两个符号面靠经典脚本的全局词法作用域共享。摘掉标签或顺序反转，pet.js 会当场报错、
+  // 穿透上报链整条断，而 verify-checkjs 的 f 条是单向 C⊆B（不判「B 有 C 无」），结构上看不见这种缺失。
+  const htmlPath = path.join(root, 'renderer', 'pet.html');
+  const htmlSrc = fs.existsSync(htmlPath) ? fs.readFileSync(htmlPath, 'utf8') : '';
+  const iCore = htmlSrc.indexOf('src="../core/interactive-box.js"');
+  const iPet = htmlSrc.indexOf('src="pet.js"');
+  assert(iCore >= 0 && iPet >= 0 && iCore < iPet, 'pet.html 加载面：core/interactive-box.js 在位且先于 pet.js',
+    `core@${iCore} pet.js@${iPet}（-1＝没找到）`);
 }
 
 console.log(`\nPASS ${pass} / FAIL ${fail}`);

@@ -1,3 +1,4 @@
+// @runtime: shared —— 退出耗时判据（终结共享实例），固定排共享批最后
 // 退出路径冒烟测试：连主进程调试端口，可选先执行一段表达式（如加载语音 worker），
 // 再调 app.quit()，测量进程树退干净所需时间。
 // 用法：PET_USER_DATA_DIR=... npx electron --inspect=9229 . 起进程后

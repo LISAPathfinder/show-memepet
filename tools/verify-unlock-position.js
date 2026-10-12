@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：解锁位置归位 vm 回归，纯 node，执行面在 run-ci.js
 // 解锁/唤醒重建的位置归位判据（票 11-K 任务 3，铁律 3：真断言 + 非零退出码）。
 //
 // 背景：unlock-screen/resume → recreatePetWindow → createPetWindow → resolvePetPosition() 的
@@ -545,6 +546,29 @@ console.log('场景 15：fleeFromCursor 真调一次（票 11-O）——不抛�
   assert(dips15.length === 1 && dips15[0].x === wantDip.x && dips15[0].y === wantDip.y,
     'walkPetTo 收到的 dip == target + size/2（内容矩形中心）',
     threw ? '（因抛异常未到达）' : dips15.length ? `${dips15[0].x},${dips15[0].y}` : 'walkPetTo 未被调用');
+}
+
+console.log('场景 16：core/geometry.js 两套矩形口径仍分开，且与本件的内容矩形桩同构（票 12-A）');
+{
+  // 本件的场景 13/15 用「origin 内收 300/440、300×160」的内容矩形桩（与 1.0.64 真模型同构），
+  // 过去只有注释声明这个同构关系、没有任何东西钉住它：红法 R2（PET_CONTENT_HEIGHT 160→154）
+  // 与 R3（contentSize 直接 return visualSize）在全仓静态层零红——红线①「两套口径不许合并」
+  // 在这里是无牙的。本场景把桩的三个数与 core 真源对账，顺带做口径分离的数值闸门。
+  // 300/440/160 是手抄锚（同步义务同 verify-scale:15「300/160 手抄 PET_SIZE 与 PET_CONTENT_HEIGHT」）：
+  // 故意改这几个数的人必须同时改这里，这正是想要的摩擦。
+  const geoPath = path.join(root, 'core', 'geometry.js');
+  if (!fs.existsSync(geoPath)) {
+    console.error('前置不满足（exit 3）：core/geometry.js 不存在于 ' + geoPath);
+    process.exit(3);
+  }
+  const geo = require(geoPath);
+  const vis = geo.visualSize(1);
+  const con = geo.contentSize(1);
+  const coff = geo.petContentOffset(1);
+  assert(vis.height === 300 && vis.width === 300, 's=1 视觉矩形 == 300×300（PET_SIZE 基准）', JSON.stringify(vis));
+  assert(con.height === 160 && con.width === 300, 's=1 内容矩形 == 300×160（本件桩同构锚）', JSON.stringify(con));
+  assert(coff.x === 300 && coff.y === 440, 's=1 内容内收 == (300,440)（本件桩同构锚）', JSON.stringify(coff));
+  assert(con.height !== vis.height, '红线①：内容口径与视觉口径仍是两个数（合并即红）', `内容高 ${con.height} vs 视觉高 ${vis.height}`);
 }
 
 console.log(`\nPASS ${pass} / FAIL ${fail}`);

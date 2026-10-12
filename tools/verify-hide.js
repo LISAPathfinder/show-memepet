@@ -1,3 +1,4 @@
+// @runtime: shared —— 隐藏/托盘端到端判据，attach 9229/9333 走真实菜单路径
 // 验证「隐藏桌宠 + 托盘」：
 //   1) 走真实路径隐藏（renderer 的 menuAction('hide-pet')，与点菜单是同一条 IPC）；
 //   2) 断言窗口还在但不可见（hide 不是 close）、进程没退；

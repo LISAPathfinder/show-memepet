@@ -1,3 +1,4 @@
+// @runtime: shared —— 读实例光标/穿透状态，attach 9229/9333（lib-occupancy 自检）
 // 探针：比较渲染端拿到的窗口屏幕坐标 vs 主进程里的真实窗口位置，
 // 以及定时重算时「屏幕坐标 → 窗口内坐标」的换算是否落在宠物脸上。
 // 用法：npx electron --inspect=9229 --remote-debugging-port=9333 . 起进程后

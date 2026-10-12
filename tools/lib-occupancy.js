@@ -1,3 +1,4 @@
+// @runtime: none —— 共享库（占用自检），被运行时件 require，不独立执行
 // 占用自检共用库（票 11-G 任务 4）：findBlockingInstances 从 verify-petcovered-alpha.js 原样抽出，
 // 供「会 attach 调试端口 / 起 dev 实例」的诊断件统一调用。
 //

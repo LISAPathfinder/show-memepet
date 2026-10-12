@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：自启注册表读回纯函数回归，纯 node，执行面在 run-ci.js
 // 自启注册表读回纯函数回归件（票 11-C 任务 1d 立件；票 11-Q 起判据换轨）。纯 node 零依赖、
 // 真断言、非零退出码（铁律 3）。判据落在被测语义（findRunEntry / isStartupApprovedEnabled 的
 // 返回值）上，任何一条不符 exit 1。

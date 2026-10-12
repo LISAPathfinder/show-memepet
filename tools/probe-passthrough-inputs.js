@@ -1,3 +1,4 @@
+// @runtime: shared —— 对账穿透三输入（bounds/光标/上报盒），attach 调试端口读实例状态
 // 对账探针：把「主进程判定穿透状态」用的三个输入量（窗口 bounds / 真实光标 / 渲染端上报的 box）摊开看，
 // 一眼看出是谁和谁不一致（「点不动」类问题的定位入口）。
 // 用法（dev 实例带 --inspect=9229 启动）：node tools/probe-passthrough-inputs.js

@@ -1,3 +1,4 @@
+// @runtime: shared —— 穿透单写入者行为回归，attach 调试端口+真实光标
 // 穿透「单写入者」回归件（真断言，1.0.57 加固轮改写）：
 //   A 渲染端拿不到穿透写入口（`petAPI.setIgnoreMouseEvents` 已摘）；
 //   B 光标稳定压在形象上 1.75s（≥6 次轮询）期间，原生穿透位从未被置上且结束时仍可交互
@@ -30,6 +31,19 @@
 //         或打「脚本异常：」行）；3 = 前置不满足（占用 / 端口不通 / ① 预期态读不到）。
 const fs = require('fs');
 const path = require('path');
+
+// §96（2026-10-10 票）：CDP 表达式 require 配置/身份模块必须用绝对路径（只能 realpathSync.native
+// 规范化盘符大小写），否则与产品分裂成两个缓存副本。native 失败兜底显式（盘符大写 + 明打）。
+const ROOT = (() => {
+  const r = path.resolve(__dirname, '..');
+  try { return fs.realpathSync.native(r); } catch (e) {
+    const fb = r.replace(/^([a-zA-Z]):/, (d) => d.toUpperCase()); // 回调收到的是全匹配（含冒号），不能再加 ':'
+    console.error(`⚠ verify-passthrough-desync: realpathSync.native 失败（${e.message}）——已显式退回「盘符大写」兜底：${fb}`);
+    return fb;
+  }
+})();
+const CFG_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))})`;
+const ID_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'identity.js'))})`;
 const koffi = require('koffi');
 const { LOG_CANDIDATES } = require('../identity');
 require('./lib-occupancy').assertNoBlockingInstances('verify-passthrough-desync.js');
@@ -127,8 +141,8 @@ function connect(port, pick) {
 
   // 隔离实例的日志在它自己的数据目录（仓库 data/ 是别的实例的），经 CDP 读真实路径；读不到再回落
   try {
-    const dir = await mainProc(`process.mainModule.require('./config').DATA_DIR`);
-    const name = await mainProc(`process.mainModule.require('./identity').LOG_NAME`);
+    const dir = await mainProc(`${CFG_REQ}.DATA_DIR`);
+    const name = await mainProc(`${ID_REQ}.LOG_NAME`);
     if (dir && name && fs.existsSync(path.join(dir, name))) LOG_PATH = path.join(dir, name);
   } catch {}
 

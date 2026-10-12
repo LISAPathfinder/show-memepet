@@ -1,3 +1,4 @@
+// @runtime: shared —— 随共享批执行：CDP 对照哨兵 + 日志面判据核对（SHOWCASE_DATA_DIR 写读实验）
 // logLine 落盘可见性分流实验（票 11-T 任务 5；结清 2026-10-05 台账「新发现 1」的归因）。
 //
 // 背景：11-S 校验轮三次实测「工具读窗内判据行没有、稍后 grep 就有」，当时被记成
@@ -16,6 +17,7 @@
 // （渲染端 mousedown → ipcRenderer.send 异步投递 → 主进程忙时排队 → logLine 晚落盘）。
 //
 // 用法：node tools/probe-log-visibility.js [仓库根，默认 cwd]
+//       基准 data 目录：SHOWCASE_DATA_DIR 优先（运行时 CI 隔离场地），否则 <根>/data。
 // 退出码（铁律 3）：0 = 断言全绿；1 = 断言失败（写侧真出现延迟才可能）；3 = 前置不满足。
 // 纯 fs 件：不接实例、无占用自检；探针写独立文件，不污染判据日志（当前写用日志只落一行对照）。
 const fs = require('fs');
@@ -23,7 +25,10 @@ const path = require('path');
 const { LOG_CANDIDATES } = require('../identity');
 
 const root = path.resolve(process.argv[2] || process.cwd());
-const dataDir = path.join(root, 'data');
+// 基准 data 目录 env-first（PITFALLS §89 同族）：写侧 config.js DATA_DIR 只认 SHOWCASE_DATA_DIR
+// 覆盖；运行时 CI 隔离场地把实例写侧指到隔离目录，读侧若仍锚 <仓>/data 就读错文件、(b) 必假红。
+// 直跑（无该 env）默认仍 = 仓内 data/，语义不变。
+const dataDir = path.resolve(process.env.SHOWCASE_DATA_DIR || path.join(root, 'data'));
 if (!fs.existsSync(dataDir)) {
   console.error('前置不满足（exit 3）：data 目录不存在于 ' + dataDir);
   process.exit(3);
@@ -75,7 +80,7 @@ try {
   // ---- (b) 读写同源性 ----
   const showcaseDataDir = process.env.SHOWCASE_DATA_DIR || null;
   const petUserDataDir = process.env.PET_USER_DATA_DIR || null;
-  const writeSide = showcaseDataDir || path.join(root, 'data'); // dev 主进程写侧（config.js DATA_DIR 同构）
+  const writeSide = dataDir; // 与头部解析同源：SHOWCASE_DATA_DIR 优先，dev 默认 = 仓内 data/
   let readSide = path.join(dataDir, LOG_CANDIDATES[0]); // 工具读侧：LOG_CANDIDATES 第一个存在的
   for (const name of LOG_CANDIDATES) {
     try {

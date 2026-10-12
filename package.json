@@ -1,6 +1,6 @@
 {
   "name": "showcase",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Emoji 桌宠 + 全局按键统计（仅本地存储）",
   "main": "main.js",
   "scripts": {
@@ -20,7 +20,8 @@
   "homepage": "https://github.com/LISAPathfinder/show-memepet#readme",
   "devDependencies": {
     "electron": "^44.3.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "typescript": "5.9.3"
   },
   "dependencies": {
     "7z-wasm": "^1.2.0",
@@ -53,6 +54,7 @@
       "skins.js",
       "gamepad-xinput.js",
       "lines.js",
+      "core/**",
       "renderer/**"
     ],
     "asarUnpack": [

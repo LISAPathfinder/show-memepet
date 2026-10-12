@@ -265,7 +265,7 @@ npm run dist        # 产物 ../showcase-build/release/showcase-setup-<版本>.e
 
 出问题时先看 **`<数据根>\showcase.log`**——安装版就是 `<安装目录>\data\showcase.log`（1.0.5 及以前的老结构在安装目录同级的 `<安装目录名>-data\data\`；1.0.48 及以前文件名是 `desktop-pet.log`）：锁屏/唤醒、穿透状态每次变化、渲染端异常、渲染端无响应、旧数据迁移、退出收尾都会逐条记录。
 
-`tools/` 下有 59 个纯 node 脚本（含 `lib-*.js` 共用库），诊断表 50 条登记——**逐件的判据层、前置条件与退出码语义在 [DIAGNOSTICS.md](DIAGNOSTICS.md)**。改动最常碰到的五件：
+`tools/` 下有 63 个纯 node 脚本（含 `lib-*.js` 共用库），诊断表 57 条登记——**逐件的判据层、前置条件与退出码语义在 [DIAGNOSTICS.md](DIAGNOSTICS.md)**。改动最常碰到的五件：
 
 | 什么时候跑 | 命令 |
 |---|---|
@@ -306,6 +306,15 @@ npm run dist        # 产物 ../showcase-build/release/showcase-setup-<版本>.e
 
 - 想要「开箱即有皮肤」的版本：换成**你有权再分发**的素材（自己生成，或明确允许嵌入分发的开源集并按其条款署名），
   放进 `assets/skins/`，同时把 `main.js` 的 `BUILTIN_SKINS_VERSION` 递增（否则老安装不会补发新批次）。
+
+### 仓库分支怎么读
+
+- **`publish` 是发布产物，不是开发分支。** 它由作者本地那条私有主线（含票面与排查台账等内部工作记录，不进公开树）
+  减去内部文件后生成快照推上来，所以这里的提交只有「发布」与「发布后的修补」两类，**看不到日常迭代的过程提交**。
+  公开的经验总结在 [PITFALLS.md](PITFALLS.md) 与 [DIAGNOSTICS.md](DIAGNOSTICS.md)，那两份是完整保留的。
+- 想改代码：请**对着某个 tag**（＝某次发布的完整源码）开分支，改动以 issue 说明或 PR 提出。直接往 `publish`
+  提 PR 会落在一个只读分支上。
+- 装机的升级链与仓库无关：靠 NSIS 固定安装 GUID，`nsis.guid` 与 `build.appId` 不随分支策略变化。
 
 ## 技术取舍（想换更轻的实现）
 

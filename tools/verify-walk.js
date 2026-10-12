@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：走过去纯逻辑，纯 node，执行面在 run-ci.js
 // 「走过去」纯逻辑的自测（纯 node，不需要 electron / 不需要真实点击）：
 //   node tools/verify-walk.js
 // 覆盖三击判定（慢三击 / 三次分散 / 冷却 / OS 连击计数路径）、路径规划（速度/时长钳制）、

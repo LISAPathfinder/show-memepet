@@ -171,12 +171,10 @@ const drag = { active: false, moved: false, startX: 0, startY: 0 };
 //   轮询算出「该可交互」时会因「值没变」直接 return，窗口永久卡在穿透上、点击全被转发到
 //   下层（表现：点不动，但计数/悬停都正常；2026-09-22 实测复现并修过记账，见 §52）。
 //   判据：tools/verify-single-writer.js（静态）+ tools/verify-passthrough-desync.js（运行时）。
-// 余量（票 11-J 任务 3 重估，6 → 2）：量化红线 = 吞点击区域 ≤ 元素真实面积的 1.2 倍
-// （tools/verify-hit-region.js ⑤ 实算）。总环宽 = 本值 + 主进程 JITTER_PAD(1) = 3px/边；
-// 票面先验猜的 4px/边实算 1.22× 超线，故取 3px。漂浮动画（translateY 0→-6）造成的盒体
-// 边界抖动不再靠渲染端 pad 吸收——主进程用快速离开通道的 FAST_EXIT_PAD 区分「贴着元素」
-// 与「真离开」（见 main.js syncPetPassThrough），这里只留上报离散化的最小贴边。
-const BOX_PAD = 2;
+// BOX_PAD（上报盒外扩余量）与 BOX_EPSILON/boxSignature（量化签名）的真源在 core/interactive-box.js：
+// 渲染端没有 CommonJS，该文件由 pet.html 先于本文件以 <script src> 加载，经典脚本的顶层声明进全局
+// 词法作用域，下面两个函数原样引用即可。这里**不许再声明一遍**——同名 const 跨脚本重复声明是
+// SyntaxError，整页脚本一起不执行（穿透上报链当场断，只有真机能看见）。
 
 // 返回离散矩形数组（各元素自带 BOX_PAD 余量）；拖拽/玻璃期间是整窗单盒数组；
 // 无可见交互元素（全隐藏）返回 null，主进程按兜底区域判定（票 11-J 任务 2）
@@ -199,21 +197,8 @@ function interactiveBox() {
   return rects.length ? rects : null;
 }
 
-// 票 11-L（11-J 任务 2b）：比对键用 3px 量化签名，而非精确 JSON。原因：漂浮动画（float 3s，
-// translateY 0→-6）让脸/zzz 盒每帧都在动（峰值 ~6px/s），精确比对会让 rAF 循环每帧都 IPC——
-// 而 ≤3px 的连续漂移本来就由主进程判定带（JITTER_PAD / FAST_EXIT_PAD + 保持期）吸收，不需要
-// 主进程知道。3px 量化后：连续漂移几乎不上报（过量化边界才报一次），显隐/scale 弹跳/拖拽玻璃
-// 进出等**离散突变**（差 >> 3px）必然触发。上报的数据仍是精确盒，量化的只是「要不要报」的判据。
-const BOX_EPSILON = 3;
-function boxSignature(box) {
-  if (!box) return 'null';
-  return box
-    .map((r) =>
-      `${Math.round(r.x / BOX_EPSILON)},${Math.round(r.y / BOX_EPSILON)},${Math.round(r.width / BOX_EPSILON)},${Math.round(r.height / BOX_EPSILON)}`
-    )
-    .join('|');
-}
-
+// 票 11-L（11-J 任务 2b）的量化签名真源在 core/interactive-box.js（boxSignature / BOX_EPSILON），
+// 见上面 BOX_PAD 那段说明——不在此重复实现，也不在此重复声明。
 let lastBoxSig = '';
 function reportInteractiveBox() {
   const box = interactiveBox();

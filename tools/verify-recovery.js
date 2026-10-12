@@ -1,3 +1,4 @@
+// @runtime: shared —— 渲染进程崩恢复判据，attach 调试端口打崩渲染端
 // 验证卡死自恢复：先让 pet 渲染进程崩溃（应自动重建窗口），再让渲染线程假死（应自动重载）。
 // 用法：npx electron --inspect=9229 --remote-debugging-port=9333 . 起进程后
 //   node tools/verify-recovery.js

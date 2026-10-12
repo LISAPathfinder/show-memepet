@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：Ctrl 对账 vm 回归，纯 node，执行面在 run-ci.js
 // Ctrl 显隐状态对账自愈判据（票 11-S 任务 1，铁律 3：真断言 + 非零退出码）。
 //
 // 背景（校验轮⑥）：f31b6ba 修「没按 Ctrl 手柄也出现」的 reconcileCtrlState 两拍对账自愈

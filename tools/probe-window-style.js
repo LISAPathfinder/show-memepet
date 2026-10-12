@@ -1,3 +1,4 @@
+// @runtime: installed —— 读装机产物真实窗口扩展样式（lib-container 定容器+句柄归属校验），不碰调试端口
 // 读桌宠各窗口的「真实」扩展样式（不依赖调试端口，可直接对安装版使用）：
 // 判定 WS_EX_TRANSPARENT（点击穿透）是否真的挂在窗口上，是排查「点不动」的硬证据。
 // 用法：node tools/probe-window-style.js            （自动从日志找句柄；每条都校验「归属 PID 属于
@@ -234,7 +235,7 @@ if (watch) {
     console.log(`${t.label}  HWND=0x${h.toString(16)}  类名=${str16(GetClassNameW, h, 128)}  （来自 ${t.from}）`);
     console.log(`  可见=${IsWindowVisible(h)}  位置=${r.l},${r.t} ${r.w}x${r.h}  光标在窗口内=${inside}`);
     // 期望值取窗口真源（票 11-E 任务 5）：1.0.52 起桌宠窗固定 600×600、与 petScale 无关
-    // （PITFALLS §74，常量真源 main.js PET_WINDOW_SIZE）；随缩放变的是「视觉尺寸」（300×petScale），
+    // （PITFALLS §74，常量真源 core/geometry.js 的 PET_WINDOW_SIZE，票 12-A 起）；随缩放变的是「视觉尺寸」（300×petScale），
     // 那不是窗口尺寸——本工具读的是窗口矩形，按整窗口径判。
     if (t.label === '桌宠窗口' && (r.w !== 600 || r.h !== 600)) {
       console.log('  ⚠ 尺寸不是 600x600：1.0.52 起桌宠窗恒为 600×600（固定窗，与缩放无关）。');

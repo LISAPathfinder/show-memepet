@@ -1,3 +1,4 @@
+// @runtime: ci —— CI 强制层判据件：名字单一真源守卫，纯 node，执行面在 run-ci.js
 // 名字一致性守卫（票 11-A）：
 // package.json 是 JSON、引用不了 JS 常量，identity.js 的值与 package.json 之间只能靠
 // 断言兜底——漏改一处从静默失效变成必红（开发协议铁律 3「判据落在终判层」的正面应用；
