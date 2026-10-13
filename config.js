@@ -1,6 +1,9 @@
 // data/config.json 读写：缺省项自动补全，未知键忽略
 const fs = require('fs');
 const path = require('path');
+// 久坐提醒三态的单一真源（票 13-B）。config 读 core 的方向是允许的——纯度闸禁的是 core 反过来
+// require config/identity，那才会让纯函数长出自己的状态。
+const { DEFAULT_MODE: DEFAULT_REMINDER_MODE, fromLegacy: reminderModeFromLegacy } = require('./core/reminder-mode');
 
 // 数据目录：数据与程序分离——NSIS 覆盖安装/卸载会清空安装目录（$INSTDIR），用户数据必须落在
 // 它之外。1.0.6 起支持两种落地方式，优先新结构：
@@ -57,8 +60,7 @@ const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 const DEFAULTS = {
   skinName: 'emoji',
   menuFontSize: 14,
-  reminderEnabled: true,
-  reminderNotifyWindows: true, // 久坐提醒同时弹 Windows 系统通知（隐藏桌宠时唯一可见的提醒途径）
+  reminderMode: DEFAULT_REMINDER_MODE, // 久坐提醒显示方式：off/bubble/notify（票 13-B 菜单三态化，真源在 core/reminder-mode）
   reminderIntervalMin: 45,
   sleepAfterMin: 10,
   petPosition: { x: null, y: null },
@@ -96,6 +98,17 @@ function load() {
     // 首次运行或文件损坏：全用默认值
   }
   cache = deepMerge(structuredClone(DEFAULTS), saved);
+  // 票 13-B 三态化迁移：旧两键已退出 DEFAULTS，deepMerge 的白名单会把它们直接丢掉 ⇒ 老用户的偏好
+  // 必须在合并后按 saved 现算一次。不落盘、不加「已迁移」标记：saved 里没有 reminderMode 就一直按
+  // 旧键现算，菜单写过一次之后自动让位（saved 里存在＝用户意图真源）。重复读幂等，也就不存在
+  // 「写到一半崩了」的半迁移态。saved 不是对象（配置被改成标量）时按空对象处理——原先 deepMerge
+  // 对这种输入是静默容忍的，不能因为这里加了 `in` 判定就抛。
+  /** @type {{ reminderMode?: string, reminderEnabled?: boolean, reminderNotifyWindows?: boolean }} */
+  const savedObj = saved && typeof saved === 'object' ? saved : {};
+  if (!('reminderMode' in savedObj)) {
+    cache.reminderMode = reminderModeFromLegacy(
+      savedObj.reminderEnabled, savedObj.reminderNotifyWindows, DEFAULTS.reminderMode);
+  }
   return cache;
 }
 

@@ -94,8 +94,8 @@ npm start
 - **打瞌睡** —— 10 分钟无键鼠/手柄活动打瞌睡（😴💤），**键鼠或手柄**任意活动立刻唤醒
 - **说话气泡** —— 每 5~15 分钟随机台词，显示 4.5 秒
 - **手速检测** —— 3 秒内 ≥24 键 → 😮「手速好快！」
-- **久坐提醒** —— 默认每 45 分钟 💧 提醒（可关、可调 30/45/60/90 分钟），键鼠活动不重置
-  - **同时弹 Windows 系统通知**（桌宠隐藏/被遮挡时也触达，点通知显示桌宠；菜单「提醒同时发 Windows 通知」可关，默认开）
+- **久坐提醒** —— 默认每 45 分钟 💧 提醒（可调 30/45/60/90 分钟），键鼠活动不重置
+  - 菜单「久坐提醒」子菜单三选一（形态同「开机自启」）：**关闭** / **仅桌宠气泡** / **同时发 Windows 通知**（默认，桌宠隐藏或被遮挡时也触达，点通知把桌宠叫回来）
 
 ### 皮肤与菜单
 
@@ -166,8 +166,7 @@ npm start
   "skinName": "emoji",           // 当前皮肤（emoji 或 skins 下的目录名）
   "menuFontSize": 14,            // 菜单字号 12~20
   "theme": "system",             // 主题：system / light / dark
-  "reminderEnabled": true,       // 久坐提醒开关
-  "reminderNotifyWindows": true, // 久坐提醒同时弹 Windows 系统通知
+  "reminderMode": "notify",      // 久坐提醒显示方式：off / bubble（仅桌宠气泡）/ notify（气泡 + Windows 通知）。旧配置里的 reminderEnabled + reminderNotifyWindows 在首次读取时自动折算，不用手动迁移
   "reminderIntervalMin": 45,     // 提醒间隔（分钟）
   "sleepAfterMin": 10,           // 打瞌睡阈值（分钟）
   "petPosition": { "x": null, "y": null },  // 桌宠位置（拖动自动保存；1.0.63 起拖拽被钳进显示器工作区，出屏只剩拓扑变化，重建时按内容矩形判据回挪或归位）

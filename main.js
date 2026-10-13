@@ -14,6 +14,9 @@ const walk = require('./walk');
 const LINES = require('./lines');
 // 桌宠几何纯函数与尺寸常量（票 12-A 搬出）：core/geometry.js 零依赖，判据件直接 require 它
 const { PET_SIZE, PET_SCALE_MIN, PET_SCALE_MAX, PET_WINDOW_SIZE, PET_CONTENT_HEIGHT, visualSize, petVisualOffset, petVisualRect, contentSize, petContentOffset, petContentRect, petFallbackBox, boxesArea, graceEndsOnReport, graceJudgeBoxes, pointInBoxes } = require('./core/geometry');
+// 久坐提醒三态（票 13-B）：显示方式判定的真源在 core/reminder-mode，菜单勾选与触发分支都读它，
+// 不在 main 里重写布尔组合（旧形态「开关 + 是否发通知」能凑出「关着仍发通知」的无意义态）。
+const { OFF: RM_OFF, BUBBLE: RM_BUBBLE, NOTIFY: RM_NOTIFY, DEFAULT_MODE: RM_DEFAULT, REMINDER_MODES, normalize: normalizeReminderMode, showsBubble: reminderShowsBubble, showsToast: reminderShowsToast, checkedFor: reminderChecked } = require('./core/reminder-mode');
 
 // 卡死/崩溃现场日志：打包版没有控制台，出问题时靠这个文件定位。
 // 写在自己数据目录里（启动时已验证可写，且用户找得到）；dev 下同时打到 stderr。
@@ -383,16 +386,20 @@ function detectFastTyping() {
 
 // F4 久坐提醒：每 reminderIntervalMin 触发一次，显示 6s；
 // 键鼠活动不重置计时器（久坐本就指持续工作）。
-// 1.0.53 起同时弹 Windows 系统通知（reminderNotifyWindows，默认开）：桌宠隐藏/被全屏
-// 应用遮挡时气泡看不见，toast 是唯一触达途径；点通知把桌宠叫回来
+// 显示方式读 reminderMode 三态（票 13-B，判定真源在 core/reminder-mode）：off 什么都不发／
+// bubble 只发桌宠气泡／notify 气泡 + Windows toast。1.0.53 起加 toast 的理由仍然成立：桌宠隐藏/
+// 被全屏应用遮挡时气泡看不见，toast 是唯一触达途径；点 toast 把桌宠叫回来。
+function petReminderMode() {
+  return normalizeReminderMode(config.get('reminderMode'), RM_DEFAULT);
+}
+
 function restartReminder() {
   clearTimeout(reminderTimer);
   const intervalMin = config.get('reminderIntervalMin') || 45;
   reminderTimer = setTimeout(() => {
-    if (config.get('reminderEnabled')) {
-      pushBubble('起来动一动，喝口水💧', 6000, 'remind');
-      if (config.get('reminderNotifyWindows')) sendReminderWindowsNotification();
-    }
+    const mode = petReminderMode();
+    if (reminderShowsBubble(mode)) pushBubble('起来动一动，喝口水💧', 6000, 'remind');
+    if (reminderShowsToast(mode)) sendReminderWindowsNotification();
     restartReminder();
   }, intervalMin * 60000);
 }
@@ -400,7 +407,7 @@ function restartReminder() {
 function sendReminderWindowsNotification() {
   try {
     if (!Notification.isSupported()) {
-      logLine('Windows 通知：当前环境不支持（Notification.isSupported=false），只发气泡');
+      logLine('Windows 通知：当前环境不支持（Notification.isSupported=false），本轮只有气泡');
       return;
     }
     const n = new Notification({
@@ -417,13 +424,32 @@ function sendReminderWindowsNotification() {
   }
 }
 
+// 菜单写入三态的唯一入口（票 13-B）。三条约束都照「开机自启」子菜单的既有做法：
+// ①点已勾选的项直接返回（checkbox 型菜单项不自带翻勾，靠这里避免第二次写盘）；
+// ②非法值不落盘——normalize 兜底回当前值，配置被手改成 'xxx' 时菜单仍然可读、仍然能改回来；
+// ③改完重排一拍计时器——与旧版开关的行为对齐（避免「刚关掉就立刻弹一次」）。三档之间切换也重排：
+// 旧版改「是否发通知」不重排，统一成「改了设置就重新计时」更好解释，也少一条只在旧形态才成立的例外。
+function setReminderMode(mode) {
+  const current = petReminderMode();
+  const next = normalizeReminderMode(mode, current);
+  if (next === current) return;
+  config.set('reminderMode', next);
+  restartReminder();
+  logLine(`久坐提醒显示方式改为 ${next}`);
+}
+
 // ---- F6 右键菜单（自绘 HTML 菜单窗口，字号可调）----
 
 let menuWindow = null;
 let lastMenuCloseAt = 0; // 菜单最近一次关闭时刻：齿轮 toggle 用它区分「点齿轮导致的 blur 关闭」与「早已关闭」
 
+// 三态在菜单上的文案（id 与动作表同名：`reminder-<mode>`）。
+// 第三项写「同时发」而不是「只发通知」——notify 的语义就是气泡照旧 + 追加 toast（1.0.53 起的行为）。
+const REMINDER_MODE_LABELS = { [RM_OFF]: '关闭', [RM_BUBBLE]: '仅桌宠气泡', [RM_NOTIFY]: '同时发 Windows 通知' };
+
 function buildMenuState() {
   const interval = config.get('reminderIntervalMin');
+  const reminderMode = petReminderMode();
   const skinName = config.get('skinName') || 'emoji';
   return {
     fontSize: config.get('menuFontSize') || 14,
@@ -450,12 +476,18 @@ function buildMenuState() {
       { id: 'reset-scale', label: '恢复默认大小' },
       { id: 'hide-pet', label: '隐藏桌宠（只留托盘图标）' },
       { sep: true },
-      { id: 'toggle-reminder', label: '久坐提醒', type: 'checkbox', checked: !!config.get('reminderEnabled') },
       {
-        id: 'toggle-reminder-notify',
-        label: '提醒同时发 Windows 通知',
-        type: 'checkbox',
-        checked: !!config.get('reminderNotifyWindows'),
+        id: 'reminder',
+        label: '久坐提醒',
+        // 票 13-B：交互照「开机自启」——父项纯导航（点它只展开子菜单），开关职责在子菜单三项。
+        // 勾选态一律走 core/reminder-mode 的 checkedFor（互斥由那处保证「恒恰有一项为真」），
+        // 不在这里写 `mode === 'off' || …` 之类的组合——旧形态两个独立勾能凑出「关着仍发通知」。
+        submenu: REMINDER_MODES.map((which) => ({
+          id: `reminder-${which}`,
+          label: REMINDER_MODE_LABELS[which],
+          type: 'checkbox',
+          checked: reminderChecked(reminderMode, which, RM_DEFAULT),
+        })),
       },
       {
         id: 'interval',
@@ -560,13 +592,9 @@ const menuActions = {
     applyPetScale(1, true);
     pushBubble('桌宠已恢复默认大小', 4500);
   },
-  'toggle-reminder': () => {
-    config.set('reminderEnabled', !config.get('reminderEnabled'));
-    restartReminder();
-  },
-  'toggle-reminder-notify': () => {
-    config.set('reminderNotifyWindows', !config.get('reminderNotifyWindows'));
-  },
+  'reminder-off': () => setReminderMode(RM_OFF),
+  'reminder-bubble': () => setReminderMode(RM_BUBBLE),
+  'reminder-notify': () => setReminderMode(RM_NOTIFY),
   'autostart-off': () => {
     // 已关再点无副作用；勾选态与开关判定都以 config.autoStart 为准（意图真源，见 buildMenuState
     // 注释）——原 getLoginItemSettings 读数在覆盖安装场景有假阴性，用它当判据会吞掉「关闭」点击。
