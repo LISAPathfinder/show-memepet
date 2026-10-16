@@ -15,6 +15,9 @@
   新增资产目录时要一并登记 `"assets/skins/**"`；且注意**打包版的皮肤扫描只看用户数据目录**（`skins.js` 的
   `defaultSkinRoot()` 对打包版返回 `SKIN_ROOT`），所以光打进包还不够，还要在首次运行时把内置皮肤释放到数据目录
   （见 main.js `installBuiltinSkins()`，用 `builtinSkinsVersion` 记批次，删掉的不复活）。
+  **【现状注记 2026-10-16】**这条"释放链"已整体摘除：素材闸把 `assets/skins/` 挡在 `build.files` 之外之后，
+  它两条路都不生效（打包版 `existsSync` 恒 false、dev 提前 return），留着属为假想需求保代码。本条保留的价值是
+  通法本身——**资产目录也要登记 build.files**，光登记被 require 的模块不够。
 
 ### 2. 原生模块必须 asarUnpack
 - **症状**（预防性修复）：修完 files 后下一个必炸点是原生模块。

@@ -30,8 +30,6 @@ contextBridge.exposeInMainWorld('petAPI', {
   onPeek: (callback) => {
     ipcRenderer.on('pet:peek', (_event, on) => callback(!!on));
   },
-  // 真实光标位置：页面重载后没有任何 mousemove，靠它才能算准穿透状态
-  getCursor: () => ipcRenderer.invoke('pet:cursor'),
   // 上报「可交互区域」（窗口内坐标）：穿透状态由主进程按它 + 真实光标判定，
   // 渲染端定时器会被页面节流，不能由渲染端兜底
   setInteractiveBox: (box) => ipcRenderer.send('pet:interactive-box', box),
@@ -70,7 +68,6 @@ contextBridge.exposeInMainWorld('petAPI', {
   onConfig: (callback) => {
     ipcRenderer.on('pet:config', (_event, cfg) => callback(cfg));
   },
-  openSkinPicker: (name) => ipcRenderer.send('skins:open-picker', name),
   getPickerData: (name) => ipcRenderer.invoke('picker:load', name),
   saveSkinMapping: (name, frames) => ipcRenderer.send('picker:save', { name, frames }),
   closePicker: () => ipcRenderer.send('picker:close'),

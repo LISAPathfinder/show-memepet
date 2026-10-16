@@ -4,6 +4,8 @@
 //
 // 判定内核与 main.js syncPetPassThrough 保持一致（改动那边请同步这里）：
 //   · 命中判定 pointInBoxes：任一小盒外扩 JITTER_PAD 含指针 → inside（1.0.59 起盒是离散数组）；
+//     本件**不抄这份实现**——直接 require core/geometry 的真源（票 12-A 抽 core 的立身理由就是
+//     判据件用真函数；此前这里是逐字节相同的副本，321 B/321 B，core 改了这边不会红）；
 //   · 在辖区内 → 立即「可交互」（进入即响应）；
 //   · 在辖区外、但指针仍在任一小盒 ∪ FAST_EXIT_PAD 内 → 连续在外满 PASS_HOLD_MS 才「穿透」
 //     （贴着元素的离开可能是盒漂动假象，§52 防线）；
@@ -13,19 +15,12 @@
 //   · petKeepInteractive（拖拽/玻璃）→ 始终「可交互」。
 //
 // 用法：node tools/verify-pass-hold.js
+const { pointInBoxes } = require('../core/geometry');
+
 const PASS_HOLD_MS = 600;
 const POLL_MS = 120; // 主进程轮询间隔
 const JITTER_PAD = 1; // 与 main.js 的 JITTER_PAD 保持一致（票 11-J 任务 3）
 const FAST_EXIT_PAD = 8; // 与 main.js 的 FAST_EXIT_PAD 保持一致（票 11-J 任务 4）
-
-function pointInBoxes(rects, x, y, pad) {
-  if (!Array.isArray(rects)) rects = rects ? [rects] : [];
-  for (const r of rects) {
-    if (!r || !(r.width > 0) || !(r.height > 0)) continue;
-    if (x >= r.x - pad && x <= r.x + r.width + pad && y >= r.y - pad && y <= r.y + r.height + pad) return true;
-  }
-  return false;
-}
 
 function createJudge() {
   let petOutsideSince = 0;

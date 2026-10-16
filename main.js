@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, session, shell, Tray } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, shell, Tray } = require('electron');
 const { spawn, execFile } = require('child_process');
 const { pathToFileURL } = require('url');
 const fs = require('fs');
@@ -13,7 +13,7 @@ const gamepadX = require('./gamepad-xinput');
 const walk = require('./walk');
 const LINES = require('./lines');
 // 桌宠几何纯函数与尺寸常量（票 12-A 搬出）：core/geometry.js 零依赖，判据件直接 require 它
-const { PET_SIZE, PET_SCALE_MIN, PET_SCALE_MAX, PET_WINDOW_SIZE, PET_CONTENT_HEIGHT, visualSize, petVisualOffset, petVisualRect, contentSize, petContentOffset, petContentRect, petFallbackBox, boxesArea, graceEndsOnReport, graceJudgeBoxes, pointInBoxes } = require('./core/geometry');
+const { PET_SIZE, PET_SCALE_MIN, PET_SCALE_MAX, PET_WINDOW_SIZE, petVisualRect, contentSize, petContentOffset, petContentRect, petFallbackBox, boxesArea, graceEndsOnReport, graceJudgeBoxes, pointInBoxes } = require('./core/geometry');
 // 久坐提醒三态（票 13-B）：显示方式判定的真源在 core/reminder-mode，菜单勾选与触发分支都读它，
 // 不在 main 里重写布尔组合（旧形态「开关 + 是否发通知」能凑出「关着仍发通知」的无意义态）。
 const { OFF: RM_OFF, BUBBLE: RM_BUBBLE, NOTIFY: RM_NOTIFY, DEFAULT_MODE: RM_DEFAULT, REMINDER_MODES, normalize: normalizeReminderMode, showsBubble: reminderShowsBubble, showsToast: reminderShowsToast, checkedFor: reminderChecked } = require('./core/reminder-mode');
@@ -336,19 +336,6 @@ function checkSleep() {
   if (sleepAfterMin > 0 && Date.now() - lastActivity >= sleepAfterMin * 60000) {
     isSleeping = true;
     pushState('sleep');
-  }
-}
-
-// 页面未加载完成时 send 会丢消息（启动恢复路径会踩到），挂到加载完成后再发
-function sendWhenLoaded(win, channel, payload) {
-  if (!win || win.isDestroyed()) return;
-  const wc = win.webContents;
-  if (wc.isLoading()) {
-    wc.once('did-finish-load', () => {
-      if (!wc.isDestroyed()) wc.send(channel, payload);
-    });
-  } else {
-    wc.send(channel, payload);
   }
 }
 
@@ -2031,35 +2018,11 @@ function ensureAutostartIntent() {
 // 撤的凭据：本机该键实测已无；公开面 orphan 首发、外部无 1.0.x 用户。反向验收：某台机器若
 // 残留旧键会一直占着通知归属，只能 reg delete 手工清——identity.js 不再导出 LEGACY_APP_ID。
 
-// ===== 内置皮肤释放（首次运行，missing-only）=====
-// 皮肤随安装包分发（asar 内 assets/skins/），而打包版的皮肤扫描只看用户数据目录，
-// 因此首次运行把内置皮肤释放到 <数据根>\skin\，让任何机器装完开箱即有这些表情包（含 ac_color）。
-// 用 config.builtinSkinsVersion 记录已释放的批次，规则：
-//   · 只补「当前批次还缺的」目录 —— 用户删掉的皮肤不会复活；
-//   · 用户已有的同名目录保持不动（不覆盖用户自己的改动）；
-//   · 以后内置皮肤更新，把 BUILTIN_SKINS_VERSION 递增即可再补一轮。
-const BUILTIN_SKINS_VERSION = 1;
-
-function installBuiltinSkins() {
-  try {
-    if (!app.isPackaged) return; // dev 模式直接读项目内 assets/skins
-    if (config.get('builtinSkinsVersion') === BUILTIN_SKINS_VERSION) return;
-    const src = path.join(app.getAppPath(), 'assets', 'skins');
-    if (!fs.existsSync(src)) return;
-    let released = 0;
-    for (const e of fs.readdirSync(src, { withFileTypes: true })) {
-      if (!e.isDirectory()) continue;
-      const dst = path.join(config.SKIN_ROOT, e.name);
-      if (fs.existsSync(dst)) continue;
-      copyDirMissingOnly(path.join(src, e.name), dst);
-      released++;
-    }
-    config.set('builtinSkinsVersion', BUILTIN_SKINS_VERSION);
-    if (released) logLine(`内置皮肤已释放到 ${config.SKIN_ROOT}（${released} 套）`);
-  } catch (err) {
-    console.error('[skins] 内置皮肤释放失败:', err.message);
-  }
-}
+// ===== 内置皮肤释放：已摘除（2026-10-16 大扫除）=====
+// 曾是 installBuiltinSkins()：首次运行把 asar 内 assets/skins\* 补放到 <数据根>\skin\，
+// 用 config.builtinSkinsVersion 记批次。摘的凭据：assets/skins/ 不在 build.files（第三方素材闸，
+// Ac娘贴纸不入库也不进包），所以打包版 existsSync 恒 false、dev 模式又提前 return —— 两条路都不生效。要恢复（含批次语义与配套 README 段）
+// 看提交 e28c638（那次它还是原样，本条摘除记在它之后的那次提交里）；用户已导入的皮肤在 <数据根>\skin\ 里，与这条链无关，不受影响。
 
 function bootApp() {
   app.whenReady().then(() => {
@@ -2070,7 +2033,6 @@ function bootApp() {
   // 1.0.55 起 Run 键 reg 直写值名钉死 identity.RUN_VALUE_NAME，不再依赖该默认值。
   app.setAppUserModelId(identity.APP_ID);
   migrateLegacyData();
-  installBuiltinSkins();
   // 主题三模式：nativeTheme 会让所有 renderer 的 prefers-color-scheme 跟随
   nativeTheme.themeSource = config.get('theme') || 'system';
 
@@ -2455,16 +2417,6 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // ---- ipc ----
-
-// 真实光标位置：渲染端不能只靠 mousemove 推位置——页面重载后（渲染进程被外部杀掉时
-// 会自动重载）就没有任何 mousemove，若此时指针正停在桌宠上，窗口会一直卡在穿透状态
-ipcMain.handle('pet:cursor', () => {
-  try {
-    return screen.getCursorScreenPoint();
-  } catch {
-    return null;
-  }
-});
 
 // ---- 桌宠穿透状态：由主进程判定（渲染端只上报可交互区域）----
 // 为什么必须放主进程：渲染页面的定时器在锁屏、长时间无操作等「页面被隐藏」的情况下会被
@@ -2886,11 +2838,6 @@ ipcMain.on('menu:font-set', (_event, size) => {
   if (menuWindow && !menuWindow.isDestroyed()) {
     menuWindow.webContents.send('menu:font', next);
   }
-});
-
-// renderer 触发 picker（菜单「挑选表情映射…」与导入后自动打开共用）；emoji 皮肤走字符网格
-ipcMain.on('skins:open-picker', (_event, skinName) => {
-  if (skinName === 'emoji' || skins.resolveSkin(skinName).dir) openPickerWindow(skinName);
 });
 
 ipcMain.handle('picker:load', (_event, skinName) => {

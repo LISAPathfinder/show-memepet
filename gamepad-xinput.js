@@ -29,43 +29,36 @@ let prevButtons = [0, 0, 0, 0];
 let prevTriggers = [0, 0, 0, 0];
 let prevSticks = [0, 0, 0, 0];
 
+// 两条 DLL 路径的 struct 与绑定完全同形（只差 dll 名与类型名），抽成一份：
+// 老系统那条是回退分支、日常不执行，副本一旦与主路径漂开（少一个字段、类型写错）只有插了
+// 老手柄才会暴露，所以不留第二份字面量。
+function bindXinput(dllName, structName) {
+  const xinput = koffi.load(dllName);
+  const XINPUT_STATE = koffi.struct(structName, {
+    packet: 'uint32',
+    wButtons: 'uint16',
+    leftTrigger: 'uint8',
+    rightTrigger: 'uint8',
+    thumbLX: 'int16',
+    thumbLY: 'int16',
+    thumbRX: 'int16',
+    thumbRY: 'int16',
+  });
+  return xinput.func('XInputGetState', 'int32', [
+    'uint32',
+    koffi.out(koffi.pointer(XINPUT_STATE)),
+  ]);
+}
+
 function start() {
   if (getXinputState) return;
   // xinput1_4 是 Win8+ 标配；老系统回退 xinput9_1_0（导出相同）
   try {
-    const xinput = koffi.load('xinput1_4.dll');
-    const XINPUT_STATE = koffi.struct('XINPUT_STATE', {
-      packet: 'uint32',
-      wButtons: 'uint16',
-      leftTrigger: 'uint8',
-      rightTrigger: 'uint8',
-      thumbLX: 'int16',
-      thumbLY: 'int16',
-      thumbRX: 'int16',
-      thumbRY: 'int16',
-    });
-    getXinputState = xinput.func('XInputGetState', 'int32', [
-      'uint32',
-      koffi.out(koffi.pointer(XINPUT_STATE)),
-    ]);
+    getXinputState = bindXinput('xinput1_4.dll', 'XINPUT_STATE');
   } catch (err) {
     startError = err.message;
     try {
-      const xinput = koffi.load('xinput9_1_0.dll');
-      const XINPUT_STATE = koffi.struct('XINPUT_STATE_9', {
-        packet: 'uint32',
-        wButtons: 'uint16',
-        leftTrigger: 'uint8',
-        rightTrigger: 'uint8',
-        thumbLX: 'int16',
-        thumbLY: 'int16',
-        thumbRX: 'int16',
-        thumbRY: 'int16',
-      });
-      getXinputState = xinput.func('XInputGetState', 'int32', [
-        'uint32',
-        koffi.out(koffi.pointer(XINPUT_STATE)),
-      ]);
+      getXinputState = bindXinput('xinput9_1_0.dll', 'XINPUT_STATE_9');
       startError = null;
     } catch (err2) {
       startError = err2.message;

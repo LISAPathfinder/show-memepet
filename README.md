@@ -128,8 +128,9 @@ npm start
     （avif 静图/动图均可，Chromium 原生解码；**jxl/heic 内核不支持，放进来只会显示破图，别用**）；
     只要能确定 `idle` 就是有效皮肤，缺某状态的图回落到 `idle` 不会空白；皮肤名可含中文，但不能带路径分隔符。
     **每个素材目录请附 `SOURCE.txt`（来源 URL + 抓取日期 + 授权条款名）与 `LICENSE.md`**——别把授权线索留给记忆。
-  - **要新增一批内置皮肤**：除了把目录放进 `assets/skins/`，还要把 `main.js` 的 `BUILTIN_SKINS_VERSION` 递增（当前 `1`）。
-    否则已装过老批次的机器拿不到新增的——释放逻辑先比 `config.builtinSkinsVersion`，同批次直接跳过（`main.js:1446` 起）。
+  - **没有"内置皮肤批次"这回事**（原 `installBuiltinSkins()` + `config.builtinSkinsVersion` 已于 2026-10-16 摘除）：
+    `assets/skins/` 不在 `package.json` 的 `build.files` 里（第三方素材闸），那条释放链在安装版与开发版都不会生效，
+    所以装完开箱可用的始终是内置 `emoji` 皮肤（纯字符，不需要素材文件），贴纸皮肤一律靠你自己放目录或走导入。
 - **自定义皮肤**：在皮肤目录下建 `<皮肤名>/` 放图片——开发版是项目内 `assets/skins/`，
   安装版是数据目录的 `skin/`（`<安装目录>\skin\`，或旧结构的 `<安装目录名>-data\skin\`）。
   菜单「**打开皮肤目录**」一键直达该目录（目录不存在会先建）；新建子目录放图即成新皮肤。
@@ -232,9 +233,8 @@ npm run dist        # 产物 ../showcase-build/release/showcase-setup-<版本>.e
 - **旧版升级自动迁移**（一次性，missing-only 不覆盖已有）：1.0.3 及以前的数据在安装目录内 `data\`/`skins\` 与同级镜像里，
   1.0.4~1.0.5 在同级 `<安装目录名>-data\`——新版启动时把上述旧位置补进当前新结构（旧子目录名 `skins\` 并入新的 `skin\`）；
   源目录保留不删（可手动清理，装在同一路径时下次覆盖安装会自然清掉旧的安装目录内副本）。
-- **内置皮肤的释放机制**（公开发布版**没有**内置贴纸素材，本节只对你自建版有意义）：若 `assets/skins/` 里有素材，
-  首次运行会把缺的批次释放到 `<数据根>\skin\`（缺什么补什么、不覆盖同名目录），用 `config.json` 的 `builtinSkinsVersion`
-  记录已释放批次——**你删掉的皮肤不会复活**，只有递增 `main.js` 的 `BUILTIN_SKINS_VERSION` 才会再补一轮。
+- **随包内置皮肤已被摘除**（2026-10-16 大扫除；机制与配套说明在 git 历史里，检索 `installBuiltinSkins` 即可取回）：
+  安装包不携带任何贴纸素材，`<数据根>\skin\` 里只有你自己导入或手放的皮肤——**你删掉的就是删掉了，不会有东西"补回来"**。
   公开版开箱可用的是内置 `emoji` 皮肤（纯字符渲染，不需要任何素材文件）+ 自行导入。
 - 计数按天存 `data/keys-YYYY-MM-DD.json`：`{"v":1,"date":"…","total":N,"keys":{…},"mouse":{…},"gamepad":{…}}`；
   同目录还有 `config.json`、当天文件的 `.bak`（会话启动快照）与 `showcase.log`（诊断日志）。
@@ -304,7 +304,8 @@ npm run dist        # 产物 ../showcase-build/release/showcase-setup-<版本>.e
   ```
 
 - 想要「开箱即有皮肤」的版本：换成**你有权再分发**的素材（自己生成，或明确允许嵌入分发的开源集并按其条款署名），
-  放进 `assets/skins/`，同时把 `main.js` 的 `BUILTIN_SKINS_VERSION` 递增（否则老安装不会补发新批次）。
+  放进 `assets/skins/` 之外还要**自己把 `"assets/skins/**"` 登记进 `package.json` 的 `build.files`**——当前实现没有
+  把包内素材落位到用户皮肤目录的机制，素材进了 asar 也不会自动出现在皮肤目录，最省事的做法是让用户导入。
 
 ### 仓库分支怎么读
 

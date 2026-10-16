@@ -86,4 +86,4 @@ function stopKeylistener() {
   }
 }
 
-module.exports = { startKeylistener, stopKeylistener, readableKeyName };
+module.exports = { startKeylistener, stopKeylistener };

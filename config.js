@@ -71,7 +71,6 @@ const DEFAULTS = {
   dblclickStats: false, // 双击桌宠打开统计面板（默认关）
   walkByTripleClick: true, // Ctrl+连续三击任意位置 → 桌宠走过去（带修饰键，避免与系统三击选段冲突）
   cursorFleeEnabled: true, // 鼠标在桌宠身上停留超过 5 秒 → 自动让开（优先向下，其次左右）
-  builtinSkinsVersion: 0, // 随包内置的皮肤已释放到用户皮肤目录的批次号（见 main.js installBuiltinSkins）
   theme: 'system', // 主题：system/light/dark（菜单「主题」写入；必须在 DEFAULTS 里登记，否则被白名单丢弃）
 };
 
@@ -131,4 +130,4 @@ function set(key, value) {
   save();
 }
 
-module.exports = { load, save, get, set, DATA_DIR, USER_DATA_ROOT, SKIN_DIR, SKIN_ROOT };
+module.exports = { load, save, get, set, DATA_DIR, USER_DATA_ROOT, SKIN_ROOT };

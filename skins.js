@@ -450,8 +450,6 @@ module.exports = {
   getSkinRoot,
   setSkinRoot,
   SKIN_STATES,
-  IMAGE_EXTS,
-  ARCHIVE_EXTS,
   matchArchive,
   collectImageFiles,
   resolveSkin,
