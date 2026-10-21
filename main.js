@@ -1006,22 +1006,52 @@ function petEdgeState(origin, wa) {
   return { state: 'nudge', overflow: Math.max(ox, oy), clamped: { x: origin.x + dx, y: origin.y + dy } };
 }
 
+// 位置-only 移动（票 14-B）：Electron 的 setPosition 在非整数 DPI 缩放下会把窗口**尺寸**抖大
+// ——它按 DIP→物理→DIP 往返重设整窗 rect，取整误差每次 +1~2px 累积（本机 1.13 缩放实测：
+// 拖动 30 步 600→679，静置不动；同一窗口用 SetWindowPos(SWP_NOSIZE) 走 10 步尺寸恒定）。
+// 拖动是唯一高频移动路径，于是越拖越大；而钳制/摆放判据按 600×600 算内容矩形，可见内容就被
+// 顶出屏幕边缘（用户报「拖动会越过屏幕边缘」）。SWP_NOSIZE 只改位置，尺寸零改动。
+// 坐标用 screen.dipToScreenPoint 换算：SetWindowPos 吃物理像素，跨屏混合 DPI 时映射非线性，
+// 按点所在屏算才准。
+const SWP_MOVE_ONLY = 0x0001 | 0x0004 | 0x0010; // NOSIZE | NOZORDER | NOACTIVATE
+
+function movePetWindowTo(x, y) {
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const b = petWindow.getBounds();
+  if (b.x === x && b.y === y) return;
+  try {
+    const fns = styleFns();
+    const hwnd = petWindow.getNativeWindowHandle().readBigUInt64LE(0);
+    const p = screen.dipToScreenPoint({ x, y });
+    fns.setPos(hwnd, 0, Math.round(p.x), Math.round(p.y), 0, 0, SWP_MOVE_ONLY);
+  } catch (err) {
+    // koffi 不可用（DLL 加载异常）时退回 Electron：位置语义不丢，代价是尺寸会缓慢漂
+    petWindow.setPosition(x, y);
+  }
+}
+
 // 拖拽屏幕钳制（2026-10-05 用户拍板）：桌宠不允许被移出屏幕——拖拽增量在主进程统一钳制，
 // 内容矩形完整钳进「所有显示器工作区」的外包络（跨屏拖拽不受影响；单屏即钳在本屏内）。
 // 走过去/让开/缩放回挪/恢复复查各自已有屏内约束，这条管住的是唯一没有边界的一路：用户拖拽。
 // 钳的是内容矩形不是整窗：固定窗比内容大得多，按整窗钳会让桌宠贴不到屏幕左/上边缘；
 // 1.0.64 从视觉矩形收紧为内容矩形（横向不变——底行 pill 仍齐窗口右缘，纵向脸能贴到上缘）。
-function clampPetOriginToWorkArea(origin) {
+// 内收量按**调用方给的真实窗口尺寸**算（票 14-B）：窗口尺寸一旦被上游 API 改动（见
+// movePetWindowTo），用常量 600 推出的钳制范围就少算了那几像素，内容照样出屏——钳制必须
+// 罩住窗口实际几何。默认值保留常量，纯逻辑判据件不传时行为不变（可测性）。
+function clampPetOriginToWorkArea(origin, winSize) {
   try {
     const was = screen.getAllDisplays().map((d) => d.workArea);
     if (!was.length) return origin;
     const s = petScale();
-    const off = petContentOffset(s);
     const size = contentSize(s);
-    const minX = Math.min(...was.map((w) => w.x));
-    const maxX = Math.max(...was.map((w) => w.x + w.width));
-    const minY = Math.min(...was.map((w) => w.y));
-    const maxY = Math.max(...was.map((w) => w.y + w.height));
+    // 不传 winSize 时退回常量模型（petContentOffset），纯逻辑判据件的桩口径不受影响
+    const off = winSize && winSize.width > 0 && winSize.height > 0
+      ? { x: winSize.width - size.width, y: winSize.height - size.height }
+      : petContentOffset(s);
+    const minX = Math.min(...was.map((a) => a.x));
+    const maxX = Math.max(...was.map((a) => a.x + a.width));
+    const minY = Math.min(...was.map((a) => a.y));
+    const maxY = Math.max(...was.map((a) => a.y + a.height));
     return {
       x: Math.min(Math.max(origin.x, minX - off.x), maxX - size.width - off.x),
       y: Math.min(Math.max(origin.y, minY - off.y), maxY - size.height - off.y),
@@ -1084,7 +1114,7 @@ function runDeferredPositionCheck(why) {
   if (edge.state === 'nudge') {
     const b = petWindow.getBounds();
     if (b.x !== edge.clamped.x || b.y !== edge.clamped.y) {
-      petWindow.setPosition(edge.clamped.x, edge.clamped.y);
+      movePetWindowTo(edge.clamped.x, edge.clamped.y);
       logLine(`解锁重建位置复查（${why}）：贴边悬出 ${edge.overflow}px（≤半幅），回挪至 ${edge.clamped.x},${edge.clamped.y}`);
     }
     return;
@@ -1092,12 +1122,12 @@ function runDeferredPositionCheck(why) {
   if (edge.state === 'out') {
     const def = petDefaultPosition(screen.getPrimaryDisplay().workArea);
     logLine(`解锁重建位置复查（${why}）：保存位置 ${saved.x},${saved.y} 仍出屏（就近工作区=${wa.x},${wa.y} ${wa.width}x${wa.height}），归位主屏右下角 ${def.x},${def.y}`);
-    petWindow.setPosition(def.x, def.y);
+    movePetWindowTo(def.x, def.y);
     return;
   }
   const b = petWindow.getBounds();
   if (b.x !== saved.x || b.y !== saved.y) {
-    petWindow.setPosition(saved.x, saved.y);
+    movePetWindowTo(saved.x, saved.y);
     logLine(`解锁重建位置复查（${why}）：显示器已恢复，拉回 ${saved.x},${saved.y}`);
   }
 }
@@ -1174,7 +1204,7 @@ function stopWalk(reason) {
 function applyPetPosition(pos) {
   if (!petWindow || petWindow.isDestroyed()) return;
   try {
-    petWindow.setPosition(pos.x, pos.y);
+    movePetWindowTo(pos.x, pos.y);
   } catch (err) {
     logLine('落位失败: ' + err.message);
     return;
@@ -1222,7 +1252,7 @@ function walkPetTo(dip) {
     const t = (Date.now() - walkPlan.startedAt) / walkPlan.durationMs;
     const p = walk.stepPosition(walkPlan.from, walkPlan.to, t);
     try {
-      petWindow.setPosition(p.x, p.y);
+      movePetWindowTo(p.x, p.y);
     } catch (err) {
       logLine('移动失败: ' + err.message);
       stopWalk('setPosition 失败');
@@ -2676,7 +2706,7 @@ ipcMain.on('pet:scale-end', (_event, v) => {
     if (vis.x < wa.x) dx = wa.x - vis.x;
     if (vis.y < wa.y) dy = wa.y - vis.y;
     if (dx || dy) {
-      petWindow.setPosition(b.x + dx, b.y + dy);
+      movePetWindowTo(b.x + dx, b.y + dy);
       config.set('petPosition', { x: b.x + dx, y: b.y + dy });
       logLine(`缩放后回挪: 窗口 ${b.x},${b.y} → ${b.x + dx},${b.y + dy}（内容矩形出屏）`);
     }
@@ -2902,8 +2932,12 @@ ipcMain.on('pet:move-by', (event, dx, dy) => {
   const b = win.getBounds();
   const target = { x: b.x + dx, y: b.y + dy };
   // 屏幕钳制只对桌宠本身：拖拽是唯一没有屏内约束的移动路径（走过去/让开/缩放回挪各自已钳）
-  const next = win === petWindow ? clampPetOriginToWorkArea(target) : target;
-  win.setPosition(next.x, next.y);
+  if (win === petWindow) {
+    const next = clampPetOriginToWorkArea(target, b);
+    movePetWindowTo(next.x, next.y); // 不能用 setPosition：它在非整数缩放下会把窗口抖大（票 14-B）
+    return;
+  }
+  win.setPosition(target.x, target.y);
 });
 
 ipcMain.on('pet:drag-end', (event) => {

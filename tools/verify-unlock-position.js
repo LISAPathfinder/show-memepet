@@ -83,6 +83,27 @@ if (missingWiring.length) {
     missingWiring.map((w) => w.key).join('/') + '）');
   process.exit(3);
 }
+
+// 票 14-C 场景 17：六条落位通道的逐个定界。票 14-B 把 5 个函数／7 个调用点的落位改走
+// movePetWindowTo（位置-only 原生移动），而 CI 此前只按 pet:move-by 一条函数体钉住——
+// 校验轮⑪ M5/M6 实测：把 applyPetPosition 或缩放后回挪退回 petWindow.setPosition，
+// 本件仍 PASS 52/0、字节一字不差（运行时件 verify-drag-clamp 也测不到，它只驱动 moveBy
+// 与合成手势）。取体失败必须 exit 3：函数被改名时这些断言不许静默跳过（11-N 立的规矩）。
+const LANDING = [
+  { key: 'movePetWindowTo', body: extractFn('movePetWindowTo'), self: true },
+  { key: 'applyPetPosition', body: extractFn('applyPetPosition') },
+  { key: 'walkPetTo', body: extractFn('walkPetTo') },
+  { key: 'runDeferredPositionCheck', body: extractFn('runDeferredPositionCheck') },
+  { key: 'pet:scale-end', body: extractAt("ipcMain.on('pet:scale-end'") },
+  { key: 'pet:move-by', body: extractAt("ipcMain.on('pet:move-by'") },
+];
+const missingLanding = LANDING.filter((l) => !l.body);
+if (missingLanding.length) {
+  console.error('前置不满足（exit 3）：落位通道的函数体提取失败（' +
+    missingLanding.map((l) => l.key).join('/') + '）');
+  process.exit(3);
+}
+
 const stateRe = /let deferredPositionCheckTimer = null;\s*let deferredPositionSaved = null/;
 const stateMatch = src.match(stateRe);
 if (!stateMatch) {
@@ -90,7 +111,11 @@ if (!stateMatch) {
   process.exit(3);
 }
 const stateSrc = stateMatch[0].replace(/\r/g, '');
-const VM_SRC = stateSrc + '\n' + fns.join('\n');
+// 票 14-B：决策层的落位改走 movePetWindowTo（位置-only 原生移动，防 setPosition 在非整数
+// DPI 缩放下把窗口抖大）。本件只判「落到哪个坐标」，故在 vm 里把它桩成 petWindow.setPosition，
+// 决策层断言口径不变。
+const MOVE_STUB = 'function movePetWindowTo(x, y) { petWindow.setPosition(x, y); }\n';
+const VM_SRC = stateSrc + '\n' + MOVE_STUB + fns.join('\n');
 
 // ---- 桩环境 ----
 // 显示器模型：主屏 (0,0) 1920x1040，副屏 (1920,0) 1080x1920；secondaryInList 控制副屏是否「已枚举」。
@@ -420,9 +445,14 @@ console.log('场景 12：拖拽屏幕钳制——桌宠不允许被移出屏幕�
   assert(c3.x === -245 && c3.y === 100, '左缘外 → 钳到内容矩形贴左缘', `${c3.x},${c3.y}`);
   const c4 = t.clampPetOriginToWorkArea({ x: 100, y: 1200 });
   assert(c4.x === 100 && c4.y === 685, '下缘外 → 钳到内容矩形贴下缘', `${c4.x},${c4.y}`);
-  // 源码级正向对照：钳制必须真的接在 pet:move-by 拖拽通路上（防「函数在、没接线」的恒绿）
-  assert(src.includes('win === petWindow ? clampPetOriginToWorkArea(target) : target'),
-    '拖拽通路 pet:move-by 已接入钳制（源码级）');
+  // 源码级正向对照：钳制必须真的接在 pet:move-by 拖拽通路上（防「函数在、没接线」的恒绿）。
+  // 票 14-B 起落位改走 movePetWindowTo（位置-only，防 setPosition 漂尺寸），一并钉住：
+  // 只钳不挪、或绕回去用 setPosition 都算接线断。
+  const moveByBody = (src.match(/ipcMain\.on\('pet:move-by'[\s\S]*?\n\}\);/) || [''])[0];
+  assert(moveByBody.includes('clampPetOriginToWorkArea(target, b)'),
+    '拖拽通路 pet:move-by 已接入钳制（源码级，带真实窗口尺寸）');
+  assert(moveByBody.includes('movePetWindowTo(next.x, next.y)'),
+    '拖拽通路的落位走 movePetWindowTo（源码级，不用会漂尺寸的 setPosition）');
 }
 
 console.log('场景 13：内容矩形模型（1.0.64 判据收紧）——脸能贴上缘、y 半幅 80px、x 半幅 150px 不变');
@@ -569,6 +599,52 @@ console.log('场景 16：core/geometry.js 两套矩形口径仍分开，且与�
   assert(con.height === 160 && con.width === 300, 's=1 内容矩形 == 300×160（本件桩同构锚）', JSON.stringify(con));
   assert(coff.x === 300 && coff.y === 440, 's=1 内容内收 == (300,440)（本件桩同构锚）', JSON.stringify(coff));
   assert(con.height !== vis.height, '红线①：内容口径与视觉口径仍是两个数（合并即红）', `内容高 ${con.height} vs 视觉高 ${vis.height}`);
+}
+
+console.log('场景 17：六条落位通道（票 14-C）——petWindow.setPosition 只许出现在 movePetWindowTo 体内');
+{
+  // 只许匹配**带接收者**的 petWindow.setPosition。main.js 里裸 setPosition 另有 5 处注释/日志串
+  //（movePetWindowTo 的注释、clamp 注释、固定窗迁移注释、stopWalk('setPosition 失败')、
+  // pet:move-by 的行尾注释）——全文搜裸词一加就红，而 includes 否定式又是恒绿守卫（铁律 3／§77）。
+  // win.setPosition 是**非桌宠窗**（菜单/锚点窗）的合法调用，不许禁。
+  const CALL_SRC = 'petWindow\\.setPosition';
+  const count = (s) => (s.match(new RegExp(CALL_SRC, 'g')) || []).length;
+
+  const selfBody = LANDING.find((l) => l.self).body;
+  const inSelf = count(selfBody);
+  // 正向对照只要求「体内 ≥1」而不是「恰 1」：票面 R6 明确要求「把体内 fns.setPos 也换成
+  // petWindow.setPosition（兜底保留）」时本件**不红**——那是入口内部的问题，归运行时件
+  // verify-drag-clamp 判（它实测能抓尺寸 +57/+111px）。写死「恰 1」会把这条分工钉成红。
+  // 基线体内处数 = 1（`koffi 不可用` 的兜底），多出来的处数只告警不判红。
+  assert(inSelf >= 1,
+    '正向对照：movePetWindowTo 体内有 petWindow.setPosition（koffi 不可用时的合法兜底；0 处＝兜底被摘或提取失败）',
+    `体内 ${inSelf} 处`);
+  if (inSelf > 1) {
+    console.log(`  · 提示：体内 ${inSelf} 处 petWindow.setPosition——入口内部退回 setPosition 归运行时件 verify-drag-clamp 判（票 14-C R6 分工）`);
+  }
+
+  // 反向：把**提取到的函数体原文**整段挖掉后，全文命中必须 0。
+  // 红时按原文偏移报行号——挖掉后再找位置只会得到挖空后的假行号，找不到根因。
+  const outside = src.split(selfBody).join('');
+  const selfStart = src.indexOf(selfBody);
+  const strayLines = [];
+  if (selfStart >= 0) {
+    for (const m of src.matchAll(new RegExp(CALL_SRC, 'g'))) {
+      if (m.index >= selfStart && m.index < selfStart + selfBody.length) continue;
+      strayLines.push(src.slice(0, m.index).split('\n').length);
+    }
+  }
+  assert(count(outside) === 0,
+    '体外不变量：movePetWindowTo 之外全文 0 处 petWindow.setPosition',
+    count(outside) === 0 ? '0 处' : `${count(outside)} 处，行号 ${strayLines.join(',')}`);
+
+  for (const l of LANDING) {
+    if (l.self) continue;
+    // 落位必须真的交给 movePetWindowTo——只钳不挪、或绕回 setPosition 都算接线断。
+    assert(l.body.includes('movePetWindowTo('),
+      `${l.key} 体内落位走 movePetWindowTo（票 14-B 接线，不是 setPosition）`);
+    assert(count(l.body) === 0, `${l.key} 体内不含 petWindow.setPosition`);
+  }
 }
 
 console.log(`\nPASS ${pass} / FAIL ${fail}`);
