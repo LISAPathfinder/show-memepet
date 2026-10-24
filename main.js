@@ -178,6 +178,12 @@ function writeFileAtomic(file, data) {
   fs.renameSync(tmp, file);
 }
 
+// 票 14-H 诊断埋点：uiohook 偶尔会报出叫不出名字的扫描码（`Key_0x…`），而这类未知键与
+// 「按手柄时键盘计数也涨」的现象同现过（2026-10-23 用户报，重启后自愈、未能当场复现）。
+// 记「未知键 + 距今最近一次手柄按键」，复发时能直接判断是不是手柄事件被某个虚拟输入层转成了键。
+let lastGamepadAt = 0;
+let lastGamepadName = '';
+
 // 跨天（或首次启动）切换到当日的记录；当日已有文件则续记
 function rollDateIfNeeded() {
   const today = todayStr();
@@ -187,8 +193,23 @@ function rollDateIfNeeded() {
 
 function bumpKey(name) {
   rollDateIfNeeded();
+  // 票 14-H：`Key_0x0` 是 uiohook 的 VC_UNDEFINED（认不出的输入），实测**与手柄输入强相关**——
+  // 2026-10-23 埋点抓到 47 行，全部紧跟在手柄按键之后（4ms~660ms）。把它当击键记，就会出现
+  // 「按手柄时键盘计数也涨」。它不是任何真实按键，直接丢弃（留一行诊断，便于日后确认来源）。
+  if (name === 'Key_0x0') {
+    const gap = lastGamepadAt ? Date.now() - lastGamepadAt : -1;
+    logLine(`丢弃未知键 Key_0x0（最近手柄按键 ${gap >= 0 ? `${gap}ms 前：${lastGamepadName}` : '：从未'}）`);
+    return;
+  }
   dayRecord.keys[name] = (dayRecord.keys[name] || 0) + 1;
   dayRecord.total += 1; // total 仅统计击键（§8：脚下 N 与 JSON total 一致）
+  if (typeof name === 'string' && name.startsWith('Key_0x')) {
+    // 其余未知扫描码（Key_0xE0xx 这类扩展码）仍保留计数——它们有可能是真实按键，只是 uiohook 叫不出名字
+    const gap = lastGamepadAt ? Date.now() - lastGamepadAt : -1;
+    logLine(
+      `未知键 ${name}（最近手柄按键 ${gap >= 0 ? `${gap}ms 前：${lastGamepadName}` : '：从未'}）`
+    );
+  }
   dirty = true;
   scheduleCounterPush();
   detectFastTyping();
@@ -244,6 +265,9 @@ function bumpGamepad(names) {
     if (typeof name !== 'string') continue;
     dayRecord.gamepad[name] = (dayRecord.gamepad[name] || 0) + 1;
   }
+  // 给「未知键」埋点留最近一次手柄按键的现场（见 bumpKey）
+  lastGamepadAt = Date.now();
+  lastGamepadName = names.filter((n) => typeof n === 'string').join(',');
   dirty = true;
   scheduleCounterPush();
 }
@@ -1474,8 +1498,9 @@ function createAnchorWindow() {
     //   shell 把工具窗排除出「应用窗口」名单，锚点一挂 TOOLWINDOW，任务管理器就失去
     //   聚合锚点，整棵进程树散成 5 条独立条目（用户 2026-10-03 实测复现，PITFALLS §67）。
     //   分组靠的就是这个窗口的「可聚焦可见非工具窗」身份，skipTaskbar（DeleteTab 登记）
-    //   保留即可；代价是 explorer 重启后任务栏可能低频回流一条纯透明条目（§57 的老问题，
-    //   概率与代价都远小于分组散开，取舍记在 PITFALLS §67）。
+    //   保留即可。explorer 重建后这条登记会丢、任务栏可能回流一条看不见的条目（§57）；
+    //   1.0.30 曾把它记成可接受回归，票 14-D 起由 startTaskbarWatchdog 按 shell 重建重发
+    //   DeleteTab 收口（用户 2026-10-21 明确不接受任何回流）。
     anchorWindow.on('closed', () => {
       anchorWindow = null;
     });
@@ -1526,6 +1551,8 @@ function styleFns() {
     isVisible: user32.func('IsWindowVisible', 'bool', ['uintptr']),
     getClassName: user32.func('GetClassNameW', 'int', ['uintptr', 'void *', 'int']),
     getPid: user32.func('GetWindowThreadProcessId', 'uint32', ['uintptr', 'void *']),
+    // 票 14-E：取 Chromium 渲染子窗（真正接收鼠标消息的那个），输入通道自检用
+    findChild: user32.func('FindWindowExW', 'uintptr', ['uintptr', 'uintptr', 'void *', 'void *']),
     dwmCloaked: koffi.load('dwmapi.dll').func('DwmGetWindowAttribute', 'int32', ['uintptr', 'uint32', 'void *', 'uint32']),
     // 分层属性读数。整串式声明照抄 findings 第六节实测件（勿改参数形式——上一轮有人把
     // 声明写法问题误判成「本机参数被系统性清零」）；out 参语义见 layeredVisuallyTransparent。
@@ -1688,10 +1715,178 @@ function forceNoTaskbar(win, label) {
     setPos(hwnd, 0, 0, 0, 0, 0, SWP_FRAME_ONLY); // 让样式位生效
     logLine(`${label}已补 WS_EX_TOOLWINDOW（任务栏不再受 shell 重建影响）`);
   } catch (err) {
-    // 兜底：skipTaskbar 仍在，只是退回「explorer 重建后可能回流」的旧行为
+    // 兜底：skipTaskbar 仍在，只是退回「explorer 重建后可能回流」的旧行为（看门狗会补上）
     logLine(`${label}设置 WS_EX_TOOLWINDOW 失败: ${err.message}`);
   }
 }
+
+// ---- 任务栏按钮看门狗（票 14-D，2026-10-21）----
+// 症状（用户实机截图，1.1.4 装机版）：任务栏里偶尔冒出一条本应用按钮，图标下还带着
+//   「正在运行」横条。定位：对桌宠进程的窗口直接补发一次 shell 的 DeleteTab，按钮当即刻
+//   消失 ⇒ 按钮来自**锚点窗**，且是「shell 侧登记丢了」，不是窗口样式没设上。
+// 为什么只有锚点窗中招：桌宠窗带 WS_EX_TOOLWINDOW，shell 枚举顶层窗口时直接排除，免疫；
+//   锚点窗不能挂 TOOLWINDOW（那会打掉任务管理器分组身份，PITFALLS §67），只能靠
+//   ITaskbarList::DeleteTab 的登记 —— 而登记是 shell 侧状态：
+//   ① explorer 重建（崩溃自恢复/手动重启/部分显示拓扑变化）后登记作废，shell 重新枚举
+//      可见顶层窗口时把锚点窗重新登记成一条看不见的按钮（§57 记的「低频回流」，1.0.30 起
+//      被当可接受回归；用户 2026-10-21 明确不接受：要么常驻、要么完全不出现）；
+//   ② 开机自启那一轮任务栏可能还没起来，构造参数里的 skipTaskbar 无处登记 —— 一次机会都没有。
+// 解法：自己持一个 ITaskbarList（与 Electron skipTaskbar 同一机制，区别是能重试）：
+//   每 1s 读 GetShellWindow()，句柄变了＝shell 重建 ⇒ 立刻重建 COM 对象并补删；
+//   另每 5s 无条件补删一次，覆盖读不出原因的重新登记。DeleteTab 对本来没有按钮的窗口是
+//   空操作、不产生可见效果（不像 AddTab 会让按钮闪一下），所以高频调用只花两次 COM 调用。
+//   不做「AddTab/DeleteTab 交替翻转」——那会让按钮真的闪。
+const CLSID_TASKBAR_LIST = guidBytes(0x56fdf344, 0xfd6d, 0x11d0, [0x95, 0x8a, 0x00, 0x60, 0x97, 0xc9, 0xa0, 0x90]);
+const IID_ITASKBAR_LIST = guidBytes(0x56fdf342, 0xfd6d, 0x11d0, [0x95, 0x8a, 0x00, 0x60, 0x97, 0xc9, 0xa0, 0x90]);
+let _taskbarLink = null;
+let taskbarTicks = 0;
+
+function guidBytes(data1, data2, data3, tail) {
+  const b = Buffer.alloc(16);
+  b.writeUInt32LE(data1, 0);
+  b.writeUInt16LE(data2, 4);
+  b.writeUInt16LE(data3, 6);
+  for (let i = 0; i < 8; i++) b[8 + i] = tail[i];
+  return b;
+}
+
+function taskbarLink() {
+  if (_taskbarLink) return _taskbarLink;
+  const ole32 = koffi.load('ole32.dll');
+  _taskbarLink = {
+    coCreate: ole32.func('int32 CoCreateInstance(void *rclsid, void *pUnkOuter, uint32 dwClsContext, void *riid, void *ppv)'),
+    shellWindow: koffi.load('user32.dll').func('uintptr GetShellWindow()'),
+    protoNoArg: koffi.proto('int32', ['void *']),
+    protoDeleteTab: koffi.proto('int32', ['void *', 'uintptr']),
+    obj: 0n,
+    vtDeleteTab: null,
+    vtRelease: null,
+  };
+  // 主线程已是 STA（Electron 自己初始化过 OLE）：这里再调一次最坏只返回 S_FALSE /
+  // RPC_E_CHANGED_MODE，都不影响后续 CoCreateInstance
+  ole32.func('int32 CoInitializeEx(void *pvReserved, uint32 dwCoInit)')(null, 2);
+  return _taskbarLink;
+}
+
+function taskbarRelease() {
+  const link = _taskbarLink;
+  if (!link || !link.obj) return;
+  try {
+    koffi.call(link.vtRelease, link.protoNoArg, link.obj);
+  } catch {
+    // 释放失败不影响后续：对象随进程退出回收
+  }
+  link.obj = 0n;
+  link.vtDeleteTab = null;
+  link.vtRelease = null;
+}
+
+// vtable 布局：0 QueryInterface / 1 AddRef / 2 Release / 3 HrInit / 4 AddTab / 5 DeleteTab
+function taskbarOpen() {
+  const link = taskbarLink();
+  if (link.obj) return true;
+  const out = Buffer.alloc(8);
+  const hr = link.coCreate(CLSID_TASKBAR_LIST, null, 1 /* CLSCTX_INPROC_SERVER */, IID_ITASKBAR_LIST, out);
+  const obj = out.readBigUInt64LE(0);
+  if (hr !== 0 || !obj) {
+    logLine(`任务栏看门狗：ITaskbarList 创建失败 hr=0x${(hr >>> 0).toString(16)}`);
+    return false;
+  }
+  const vt = koffi.decode(obj, 'void *');
+  const slot = (i) => koffi.decode(vt, i * 8, 'void *');
+  const hrInit = koffi.call(slot(3), link.protoNoArg, obj);
+  if (hrInit !== 0) {
+    logLine(`任务栏看门狗：ITaskbarList::HrInit 失败 hr=0x${(hrInit >>> 0).toString(16)}`);
+    koffi.call(slot(2), link.protoNoArg, obj);
+    return false;
+  }
+  link.obj = obj;
+  link.vtDeleteTab = slot(5);
+  link.vtRelease = slot(2);
+  return true;
+}
+
+function taskbarWinLabel(win) {
+  if (win === petWindow) return '桌宠窗口';
+  if (win === anchorWindow) return '锚点窗口';
+  if (win === menuWindow) return '菜单窗口';
+  if (win === pickerWindow) return '换皮窗口';
+  if (win === statsWindow) return '统计窗口';
+  return '窗口';
+}
+
+// 对本应用所有窗口补发 DeleteTab：桌宠窗有 TOOLWINDOW 本就无按钮（空操作），
+// 锚点/菜单/统计窗才是真被删的对象
+function taskbarDeleteTabs(why) {
+  const link = taskbarLink();
+  if (!taskbarOpen()) return false;
+  let ok = true;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win || win.isDestroyed()) continue;
+    let hwnd;
+    try {
+      hwnd = win.getNativeWindowHandle().readBigUInt64LE(0);
+    } catch {
+      continue;
+    }
+    let hr = koffi.call(link.vtDeleteTab, link.protoDeleteTab, link.obj, hwnd);
+    if (hr !== 0) {
+      // 跨 explorer 重建后旧对象指向死掉的代理：重建一次再补一刀
+      taskbarRelease();
+      if (!taskbarOpen()) return false;
+      hr = koffi.call(link.vtDeleteTab, link.protoDeleteTab, link.obj, hwnd);
+    }
+    if (hr !== 0) {
+      ok = false;
+      logLine(`任务栏看门狗：${taskbarWinLabel(win)} DeleteTab 失败 hr=0x${(hr >>> 0).toString(16)}（${why}）`);
+    }
+  }
+  return ok;
+}
+
+function startTaskbarWatchdog() {
+  const link = taskbarLink();
+  let shell = 0;
+  try {
+    shell = Number(link.shellWindow()) || 0;
+  } catch {
+    // 读不到就交给 5s 补删兜底
+  }
+  taskbarDeleteTabs('启动');
+  logLine(`任务栏看门狗启动（shell HWND=0x${shell.toString(16)}，1s 巡检 / 5s 补删）`);
+  timers.push(
+    setInterval(() => {
+      try {
+        const now = Number(link.shellWindow()) || 0;
+        taskbarTicks += 1;
+        if (!shell && now) {
+          // 开机自启那一轮：任务栏后起来，构造参数里的 skipTaskbar 当时无处登记
+          shell = now;
+          logLine(`任务栏 shell 就绪（GetShellWindow=0x${now.toString(16)}）：补删本应用任务栏按钮`);
+          taskbarDeleteTabs('shell 就绪');
+          return;
+        }
+        if (now && now !== shell) {
+          logLine(`任务栏 shell 重建（GetShellWindow 0x${shell.toString(16)} → 0x${now.toString(16)}）：重建任务栏对象并补删按钮`);
+          shell = now;
+          taskbarRelease();
+          taskbarDeleteTabs('shell 重建');
+          return;
+        }
+        if (taskbarTicks % 5 === 0) taskbarDeleteTabs('定期');
+      } catch (err) {
+        logLine('任务栏看门狗异常: ' + err.message);
+      }
+    }, 1000)
+  );
+}
+
+// 票 14-D 诊断面（tools/verify-taskbar-tabs.js 用）：只读计数 ＋ 一次真实补删。
+// 没有这层的话「看门狗在跑」在进程外没有任何观测点——日志只在启动与失败时写，
+// 常年没有失败就等于常年没有读数（PITFALLS §83 同族）。两个钩子都只读产品状态，
+// 补删对没有按钮的窗口是空操作，不会把共享批的场地改脏。
+global.__taskbarTicks = () => taskbarTicks;
+global.__taskbarSweep = () => taskbarDeleteTabs('诊断请求');
 
 // 解锁/唤醒后重建桌宠窗口。
 // 实测证据（tools/probe-window-style.js --watch）：解锁后窗口样式显示「可接收点击」、
@@ -2074,6 +2269,13 @@ function bootApp() {
   createPetWindow();
   // 托盘常驻：既是「隐藏桌宠」之后的唯一入口，也顺手给了一个快捷显隐/退出
   createTray();
+  // 票 14-D：任务栏按钮看门狗（锚点窗只靠 shell 侧登记，explorer 重建后会回流）
+  try {
+    startTaskbarWatchdog();
+  } catch (err) {
+    // koffi/COM 不可用时退回旧行为，不能拖累启动
+    logLine('任务栏看门狗启动失败: ' + err.message);
+  }
 
   // 1.0.71 显隐请求哨兵监听：第二实例抢锁失败立即退出前会写 identity.SHOW_REQUEST_NAME
   // （写端见文件尾抢锁失败分支）。提权首实例收不到 second-instance（Windows 完整性策略
@@ -2175,6 +2377,7 @@ function bootApp() {
     setInterval(() => {
       syncPetPassThrough(false);
       checkCursorRest();
+      checkPetInputRoute(); // 票 14-E：输入通道自检（内部 2s 降频）
     }, 120)
   );
 
@@ -2420,6 +2623,7 @@ app.on('before-quit', () => {
   if (tray && !tray.isDestroyed()) tray.destroy(); // 不销毁会在托盘里留个幽灵图标
   for (const t of timers) clearInterval(t);
   timers.length = 0;
+  taskbarRelease(); // 票 14-D：COM 对象在进程退出前显式放掉
   try {
     stopKeylistener();
   } catch (err) {
@@ -2595,6 +2799,74 @@ function syncPetPassThrough(force) {
   } catch (err) {
     logLine('设置穿透状态失败: ' + err.message);
   }
+}
+
+// ---- 票 14-E：输入通道自检（渲染子窗口在不在）----
+// 症状（2026-10-21 用户报「挂着没动一段时间后点不动」）：息屏 / 现代待机唤醒后，Chromium 的渲染
+// 子窗（Chrome_RenderWidgetHostHWND，真正接收鼠标消息的那个）被藏起来且不再回来。外壳窗口的
+// EXSTYLE 仍是「可交互」、WindowFromPoint 也落在桌宠上，但点击全丢——三层读数里只有第三层看得出来。
+// 为什么现有自愈没救场：它挂在 powerMonitor 的 lock-screen/unlock-screen/suspend/resume 上，而
+// 「仅关屏 / S0 现代待机」这条路径上这几个事件一个都不发（实机证据：系统 Kernel-Power 566 在
+// 21:36/21:44/23:05 记了 3 次 SessionUnlock，产品最后一次 unlock 钩子停在 19:16）——事件不来，
+// 重建就不会发生，坏了两小时无人知。所以这里不补事件监听（漏一种成因就再坏一次），改为按
+// 「子窗口在不在」自检：不依赖任何成因（息屏、遮挡、shell 重建、会话切换都覆盖）。
+// 代价：2s 一次 FindWindowExW + 两次 GetWindowRect，相对 120ms 主轮询可忽略。
+const RENDER_CHILD_CLASS = 'Chrome_RenderWidgetHostHWND';
+// 600ms 而不是 2000ms：2026-10-22 装机实测，息屏/解锁唤醒后「要等一两秒才点得动」的那一次，
+// 时间是花在本轮「确认」上——解锁重建后子窗仍没回来，2s×2 拍才轮到自检动手（日志 04:30:37.96
+// 重建 → 04:30:42.26 才自检重建，中间 4.3s）。降到 600ms 后同样的坏态约 1.2s 就动手。
+// 安全边界：重建后的页面实测 0.2s 内就「元素已渲染齐」，子窗若正常那时一定在；1.2s 的判定窗远晚于此。
+const PET_ROUTE_CHECK_MS = 600;
+const PET_ROUTE_FAIL_TICKS = 2; // 连续两拍不健康才动手：单拍读不到（重建途中/页面未加载）不算故障
+const PET_ROUTE_HEAL_COOLDOWN_MS = 30000; // 重建冷却：新窗口加载期间子窗也短暂不在，别连环重建
+const PET_ROUTE_SIZE_TOLERANCE = 8; // 子窗应与父窗同尺寸（实测差 1px），差超过 8px 视为失效
+let petRouteCheckAt = 0;
+let petRouteHealAt = 0;
+let petRouteBadTicks = 0;
+// 诊断面：验收件读它证明「自检在跑」「真的重建过」——进程外没有别的观测点（同 §99 的 __taskbarTicks）
+global.__petRouteChecks = 0;
+global.__petRouteHeals = 0;
+
+function petInputRouteState() {
+  // true=健康 / false=失联 / null=测不了（koffi 不可用等，不发明故障）
+  if (!petWindow || petWindow.isDestroyed()) return null;
+  try {
+    const { findChild, isVisible, getRect } = styleFns();
+    const hwnd = petWindow.getNativeWindowHandle().readBigUInt64LE(0);
+    const child = Number(findChild(hwnd, 0, Buffer.from(RENDER_CHILD_CLASS + '\0', 'utf16le'), null));
+    if (!child || !isVisible(child)) return false;
+    const c = winRect(getRect, child);
+    const p = winRect(getRect, hwnd);
+    if (Math.abs(c.r - c.l - (p.r - p.l)) > PET_ROUTE_SIZE_TOLERANCE) return false;
+    if (Math.abs(c.b - c.t - (p.b - p.t)) > PET_ROUTE_SIZE_TOLERANCE) return false;
+    return true;
+  } catch {
+    return null;
+  }
+}
+
+function checkPetInputRoute() {
+  const now = Date.now();
+  if (now - petRouteCheckAt < PET_ROUTE_CHECK_MS) return;
+  petRouteCheckAt = now;
+  // 隐藏态不判（看不见就不用管），重建途中不判（页面的子窗本来就还没出来）
+  if (!petWindow || petWindow.isDestroyed() || !petWindow.isVisible()) return;
+  if (petPeekActive || recreatingPet) return;
+  const ok = petInputRouteState();
+  if (ok === null) return;
+  global.__petRouteChecks++;
+  if (ok) {
+    petRouteBadTicks = 0;
+    return;
+  }
+  petRouteBadTicks++;
+  if (petRouteBadTicks < PET_ROUTE_FAIL_TICKS) return;
+  if (now - petRouteHealAt < PET_ROUTE_HEAL_COOLDOWN_MS) return;
+  petRouteHealAt = now;
+  petRouteBadTicks = 0;
+  global.__petRouteHeals++;
+  logLine('输入通道自检：渲染子窗口不在/尺寸异常（连续 2 拍）→ 重建窗口（票 14-E）');
+  recreatePetWindow('输入通道自检', false);
 }
 
 // ---- 右键桌宠：让路穿透 2 秒（参考本机 Bongo Cat 的「让一让」交互）----

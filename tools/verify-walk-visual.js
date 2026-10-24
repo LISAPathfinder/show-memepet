@@ -78,8 +78,19 @@ async function main() {
     `);
 
   console.log('发送 pet:walk {active:true, direction:-1}（向左走）:', await sendWalk(true, -1));
-  await sleep(400);
-  const leftState = JSON.parse(await readState());
+  // 票 14-I：读**稳态**不读瞬时态。`pet:walk` 是 IPC 投递后由渲染端下一帧应用 class/transform，
+  // 固定 400ms 在「页面刚被重建 / 首帧合成」时会读到上一状态（实测全量轮里偶发 bodyAnim 还是
+  // float → 判据红，单跑必绿）。轮询到目标状态为止，上限 1.5s——产品真坏时照样红。
+  const readUntil = async (pred, ms = 1500) => {
+    const end = Date.now() + ms;
+    let st = JSON.parse(await readState());
+    while (!pred(st) && Date.now() < end) {
+      await sleep(100);
+      st = JSON.parse(await readState());
+    }
+    return st;
+  };
+  const leftState = await readUntil((s) => s.state === 'move' && s.bodyAnim === 'walk-bob');
   console.log('  → 渲染端状态 =', JSON.stringify(leftState));
 
   const shot = await renderer.send('Page.captureScreenshot', { format: 'png' });
@@ -87,13 +98,11 @@ async function main() {
   console.log('  → 截图 =', outShot);
 
   console.log('发送 pet:walk {active:true, direction:1}（向右走）:', await sendWalk(true, 1));
-  await sleep(300);
-  const rightState = JSON.parse(await readState());
+  const rightState = await readUntil((s) => s.state === 'move' && s.flip === false);
   console.log('  → 渲染端状态 =', JSON.stringify(rightState));
 
   console.log('发送 pet:walk {active:false}:', await sendWalk(false, 1));
-  await sleep(300);
-  const idleState = JSON.parse(await readState());
+  const idleState = await readUntil((s) => s.state === 'idle');
   console.log('  → 渲染端状态 =', JSON.stringify(idleState));
 
   const ok =

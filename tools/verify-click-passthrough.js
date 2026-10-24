@@ -31,7 +31,10 @@ const FindWindowExW = user32.func('FindWindowExW', 'uintptr', ['uintptr', 'uintp
 const GetClassNameW = user32.func('GetClassNameW', 'int', ['uintptr', 'void *', 'int']);
 const GetAncestor = user32.func('GetAncestor', 'uintptr', ['uintptr', 'uint32']);
 const WindowFromPoint = user32.func('WindowFromPoint', 'uintptr', ['int64']);
-const SetCursorPos = user32.func('SetCursorPos', 'bool', ['int', 'int']);
+const { dipSetter, readDipScale } = require('./lib-cursor'); // 票 14-G：DIP→物理换算
+// 件里的坐标全是 DIP，这个 setter 吃 DIP、发物理像素（定义见 lib-cursor）
+let DIP_SCALE = 0;
+const SetCursorPos = dipSetter(() => DIP_SCALE);
 const MOUSEINPUT = koffi.struct('MOUSEINPUT_VCP', {
   dx: 'long',
   dy: 'long',
@@ -137,6 +140,7 @@ const distOut = (p, rects) => {
   }
   const isDesktopRoot = (root) => desktops.some((d) => d.hwnd === root);
   const mainProc = await connect(9229, (ts) => ts.find((t) => t.type === 'node') || ts[0]);
+  DIP_SCALE = await readDipScale(mainProc); // 票 14-G：值取产品自己用的那个
   const renderer = await connect(9333, (ts) => ts.find((t) => (t.url || '').endsWith('pet.html')));
 
   const info = JSON.parse(

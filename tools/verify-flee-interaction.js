@@ -10,6 +10,8 @@ const path = require('path');
 const koffi = require('koffi');
 const { LOG_CANDIDATES } = require('../identity');
 const { PreconditionError, loadRectMath, aimAt } = require('./lib-aim');
+// 票 14-G：aim 是 DIP（bounds + 上报盒都是 DIP），SetCursorPos 吃物理像素，换算交给共享库
+const { readDipScale } = require('./lib-cursor');
 
 const user32 = koffi.load('user32.dll');
 const SetCursorPos = user32.func('SetCursorPos', 'bool', ['int', 'int']);
@@ -82,6 +84,9 @@ const send = (flags) => {
   require('./lib-occupancy').assertNoBlockingInstances('verify-flee-interaction.js'); // 占用自检 exit 3（票 11-G 任务 4）
   const rectMath = loadRectMath(path.join(__dirname, '..')); // main.js 矩形公式提取失败 = 前置不满足
   const m = await connect(9229, (t) => t.find((x) => x.type === 'node') || t[0]);
+  // 票 14-G：DIP→物理换算；aim/aim2 都是 DIP，直接喂 SetCursorPos 会按缩放比错位
+  const DIP_SCALE = await readDipScale(m);
+  const putCursor = (p) => SetCursorPos(Math.round(p.x * DIP_SCALE), Math.round(p.y * DIP_SCALE));
   const renderer = await connect(9333, (t) => t.find((x) => (x.url || '').endsWith('pet.html')));
   // 瞄点换轨（票 11-S 任务 2）：上报盒脸中心 + 「落点不在形象上」前置断言（不满足 exit 3）
   const ctx = await aimAt({ mainProc: m, renderer, rectMath, label: 'A 按住' });
@@ -91,7 +96,7 @@ const send = (flags) => {
   );
 
   // ---- A) 按住 8 秒 ----
-  SetCursorPos(aim.x, aim.y);
+  putCursor(aim);
   await sleep(300);
   const holdMark = lines().length;
   send(0x0001); // MOVE
@@ -99,7 +104,7 @@ const send = (flags) => {
   console.log('A) 按住左键 8 秒（阈值 5 秒，按理不该让开）…');
   for (let i = 0; i < 16; i++) {
     await sleep(500);
-    SetCursorPos(aim.x, aim.y); // 保持光标不动（防止真实鼠标干扰）
+    putCursor(aim); // 保持光标不动（防止真实鼠标干扰）
   }
   const duringHold = fledSince(holdMark).length;
   send(0x0004); // LEFTUP
@@ -120,7 +125,7 @@ const send = (flags) => {
   const clickMark = lines().length;
   console.log(`B) 每 2 秒点一次、共 5 次（合计约 10 秒 > 5 秒阈值）…`);
   for (let i = 0; i < 5; i++) {
-    SetCursorPos(aim2.x, aim2.y);
+    putCursor(aim2);
     send(0x0001);
     send(0x0002);
     await sleep(60);
@@ -130,7 +135,7 @@ const send = (flags) => {
   const duringClicks = fledSince(clickMark).length;
   console.log(`   连点期间出现「让开」次数 = ${duringClicks} → ${duringClicks === 0 ? '✓ 未触发（点击打断了计时）' : '✗ 触发了'}`);
 
-  SetCursorPos(aim2.x - 300, aim2.y);
+  putCursor({ x: aim2.x - 300, y: aim2.y });
   const ok = duringHold === 0 && afterRelease >= 1 && duringClicks === 0;
   console.log(ok ? '\n✓ 新规则成立：按住/点击期间不让开，松手后重新计时' : '\n✗ 有不符预期的项');
   process.exit(ok ? 0 : 1);

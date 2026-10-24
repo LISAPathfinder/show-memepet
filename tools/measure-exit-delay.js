@@ -15,6 +15,9 @@
 //                          FAST 通道）——设计内迟早穿透，只防秒级长尾；
 //   C 组（正向对照）     = dist ≤ JITTER_PAD(1) → 静态判定恒 inside；实机漂浮/量化会
 //                          让顶边点间歇摆出环（见下），断言只要求「删失被观测到 ≥1」。
+//                          ⚠ 票 14-I：C 点以前是外推距离表的副产物（最小 d=FAST_PAD+2=10 ⇒
+//                          dist≥10），只能靠「上方向点恰好落进相邻盒 1px 内」的巧合——14-G
+//                          末轮实测「C 组无样本」整件红。现在沿最大盒四边界外法向显式取 0/1px。
 // 日志 120ms 节流会吃掉真实翻转时刻，故不解析日志。
 //
 // ⚠ 「C 组恒删失」的物理边界（2026-10-05 实跑坐实，写断言前必读）：.pet-body 漂浮
@@ -30,7 +33,7 @@
 //   双实例场地（装机版同时在跑）读数可信度降一级（票 11-N 前置提示）。
 //
 // 用法：node tools/measure-exit-delay.js [轮数，默认 2]
-// 退出码：0 = A 组 p50≤250/p90≤400、A 与 B 组长尾≤2000、C 组非空且全部删失；1 = 断言不过；3 = 前置不满足。
+// 退出码：0 = A 组 p50≤250/p90≤400、A 与 B 组长尾≤2000、C 组有样本且删失≥1；1 = 断言不过；3 = 前置不满足。
 //
 // 红法（票 11-N ★3，都在 %TEMP% 副本实跑）：
 //   ① 人为灌一个 dist=20/delay=2500 的 A 组样本 → exit 1 红在 A 组（防把上限改松）；
@@ -45,7 +48,10 @@ warnBlockingInstances();
 
 const user32 = koffi.load('user32.dll');
 const GetWindowLongPtrW = user32.func('GetWindowLongPtrW', 'int64', ['uintptr', 'int']);
-const SetCursorPos = user32.func('SetCursorPos', 'bool', ['int', 'int']);
+const { dipSetter, readDipScale } = require('./lib-cursor'); // 票 14-G：DIP→物理换算
+// 件里的坐标全是 DIP，这个 setter 吃 DIP、发物理像素（定义见 lib-cursor）
+let DIP_SCALE = 0;
+const SetCursorPos = dipSetter(() => DIP_SCALE);
 const GWL_EXSTYLE = -20;
 const WS_EX_TRANSPARENT = 0x20;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -102,6 +108,7 @@ const pct = (arr, q) => {
 
 (async () => {
   const mainProc = await connect(9229, (ts) => ts.find((t) => t.type === 'node') || ts[0]);
+  DIP_SCALE = await readDipScale(mainProc); // 票 14-G：值取产品自己用的那个
   const renderer = await connect(9333, (ts) => ts.find((t) => (t.url || '').endsWith('pet.html')));
 
   const info = JSON.parse(
@@ -158,11 +165,15 @@ const pct = (arr, q) => {
     );
   }
   const seen = new Set();
-  const pushTarget = (p, dir, base) => {
+  const pushTarget = (p, dir, base, allowInside) => {
     p.x = Math.round(p.x);
     p.y = Math.round(p.y);
     const dist = Math.round(distOut(p, boxes));
-    if (p.x < 2 || p.y < 2 || dist < 1) return; // 出屏/落进别的盒里
+    if (p.x < 2 || p.y < 2) return; // 出屏
+    // 主体点（A/B 组）必须真的落在盒外：预想外推距离不可信，点落进相邻盒时按实际 dist 重分类
+    // 仍会归到 B/C，但把「本来想取离开点、实际落在盒内深处」的点混进样本没有意义。
+    // C 组例外（票 14-I）：它就是要在 JITTER_PAD 环内，dist 0/1 正是被测形态。
+    if (!allowInside && dist < 1) return;
     const key = `${p.x},${p.y}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -176,8 +187,26 @@ const pct = (arr, q) => {
       y: e.y + (e.dir === '上' ? -d : e.dir === '下' ? d : 0),
     });
     for (const d of [FAST_PAD + 2, FAST_EDGE, FAST_PAD + 12, FAST_PAD + 42]) {
-      pushTarget(outward(d), e.dir, d);
+      pushTarget(outward(d), e.dir, d, false);
     }
+  }
+  // C 组离开点必须**显式构造**（票 14-I）：上面那张外推距离表最小是 FAST_PAD+2=10 ⇒ dist≥10，
+  // C 组（dist≤JITTER_PAD）只能靠「上方向点恰好落进相邻盒 1px 内」的巧合，14-G 末轮实测就是
+  // 「C 组无样本」整件红。沿最大盒（脸）四边界外法向取 0/1px：仍按实际 dist 归组，不预设。
+  // 只对脸盒做（4 边 × 2 距 × 轮数），不给每个小盒都铺——C 点是删失样本，每个最多占 3s，
+  // 铺满会把件拖进 10min 兜底超时。
+  const faceEdges = [
+    { x: face.x, y: face.y + face.height / 2, dir: '左' },
+    { x: face.x + face.width, y: face.y + face.height / 2, dir: '右' },
+    { x: face.x + face.width / 2, y: face.y, dir: '上' },
+    { x: face.x + face.width / 2, y: face.y + face.height, dir: '下' },
+  ];
+  for (const e of faceEdges) {
+    const outward = (d) => ({
+      x: e.x + (e.dir === '左' ? -d : e.dir === '右' ? d : 0),
+      y: e.y + (e.dir === '上' ? -d : e.dir === '下' ? d : 0),
+    });
+    for (const d of [0, JITTER_PAD]) pushTarget(outward(d), `${e.dir}#C`, d, true);
   }
 
   const rounds = Math.max(1, Number(process.argv[2]) || 2);

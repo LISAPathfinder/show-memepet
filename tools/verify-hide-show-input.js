@@ -22,9 +22,13 @@ const path = require('path');
 const koffi = require('koffi');
 const { LOG_CANDIDATES } = require('../identity');
 const { PreconditionError, loadRectMath, aimAt } = require('./lib-aim'); // 瞄点换轨 + 「落点不在形象上」前置（票 11-S 任务 2）
+const { showPetBySecondInstance } = require('./lib-show-pet'); // 票 14-I：真入口显示（第二实例→showPet 重建）
 
 const user32 = koffi.load('user32.dll');
-const SetCursorPos = user32.func('SetCursorPos', 'bool', ['int', 'int']);
+const { dipSetter, readDipScale } = require('./lib-cursor'); // 票 14-G：DIP→物理换算
+// 件里的坐标全是 DIP，这个 setter 吃 DIP、发物理像素（定义见 lib-cursor）
+let DIP_SCALE = 0;
+const SetCursorPos = dipSetter(() => DIP_SCALE);
 const MOUSEINPUT = koffi.struct('MOUSEINPUT', { dx: 'long', dy: 'long', mouseData: 'uint32', dwFlags: 'uint32', time: 'uint32', dwExtraInfo: 'uintptr' });
 const INPUT = koffi.struct('INPUT', { type: 'uint32', mi: MOUSEINPUT });
 const SendInput = user32.func('SendInput', 'uint32', ['uint32', koffi.pointer(INPUT), 'int']);
@@ -119,6 +123,7 @@ let rectMath;
   require('./lib-occupancy').assertNoBlockingInstances('verify-hide-show-input.js'); // 占用自检 exit 3（票 11-G 任务 4）
   rectMath = loadRectMath(path.join(__dirname, '..')); // main.js 矩形公式提取失败 = 前置不满足
   mainProc = await connect(9229, (t) => t.find((x) => x.type === 'node') || t[0]); // 旧码 || x[0] 是引用错误，前置路径会炸成脚本异常
+  DIP_SCALE = await readDipScale(mainProc); // 票 14-G：值取产品自己用的那个
   rendererProc = await connect(9333, (t) => t.find((x) => (x.url || '').endsWith('pet.html')));
   const a = await clickAndCheck('① 隐藏前');
   if (!a) {
@@ -132,28 +137,16 @@ let rectMath;
   await rendererProc('(() => { window.petAPI.menuAction("hide-pet"); return "hidden"; })()');
   await sleep(800);
   console.log('③ 显示走**真入口**：再起一个实例 → second-instance → showPet()（重建句柄）。1.0.71 起产品不再用同句柄 showInactive 露面（PITFALLS §95）');
-  const mark3 = logLines().length;
-  const exePath = (() => {
-    const e = (() => { try { return require('electron'); } catch { return ''; } })();
-    return typeof e === 'string' && e ? e : path.join(__dirname, '..', 'node_modules', 'electron', 'dist', 'electron.exe');
-  })();
+  // 票 14-I：这段（选 exe + 校验 PET_USER_DATA_DIR + spawn + 等日志锚）抽进 lib-show-pet，
+  // verify-hide 的收场也走它——两件同一条真入口，别各抄一份。
   const petUserData = String(await mainProc('(() => String(process.env.PET_USER_DATA_DIR || ""))()'));
   if (!petUserData) {
     console.error('前置不满足：主进程没有 PET_USER_DATA_DIR，第二实例撞不到同一把单实例锁（会起成第二个应用）');
     process.exit(3);
   }
-  const childEnv = { ...process.env };
-  delete childEnv.ELECTRON_RUN_AS_NODE; // §64：必须删除该变量，置空串不算
-  childEnv.PET_USER_DATA_DIR = petUserData;
-  const second = require('child_process').spawn(exePath, [path.join(__dirname, '..')], { env: childEnv, stdio: 'ignore', detached: true });
-  second.unref();
-  let rebuilt = false;
-  for (let i = 0; i < 14 && !rebuilt; i++) {
-    await sleep(700);
-    rebuilt = logLines().slice(mark3).some((l) => /显示桌宠（已重建窗口句柄/.test(l));
-  }
-  if (!rebuilt) {
-    console.error('前置不满足：没等到「显示桌宠（已重建窗口句柄」日志行——真入口显示没走通，后续读数无锚');
+  const revived = await showPetBySecondInstance({ repoRoot: path.join(__dirname, '..'), timeoutMs: 15_000 });
+  if (!revived.ok) {
+    console.error(`前置不满足：没等到「显示桌宠（已重建窗口句柄」日志行——真入口显示没走通，后续读数无锚（日志 ${revived.logPath}）`);
     process.exit(3);
   }
   // showPet() 重建换掉的正是渲染页：旧 WebSocket 对着已销毁的页面，必须重连，

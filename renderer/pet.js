@@ -440,8 +440,15 @@ gearEl.addEventListener('click', () => {
 // ===== 悬浮计数（F5/F8）：「⌨ N · 🖱 M · 🎮 G」三段式，数字变化时轻微弹跳 =====
 let lastCounter = { keys: -1, mouse: -1, gamepad: -1 };
 
-function counterSeg(icon, value, changed) {
-  return `<span class="seg${changed ? ' bump' : ''}">${icon} ${value}</span>`;
+// 图标一律用**带变体选择符的彩色 emoji**：不带 VS16 时 ⌨(U+2328)/🖱(U+1F5B1) 会回退到
+// Microsoft YaHei UI 的文本字形，与 🎮 的彩色字形基线不同，底行五个元素的视觉中心就对不齐。
+// 写成转义而不是字面量：这两个码点在编辑器里肉眼长得一样，字面量被"规范化"掉 VS16 后无从察觉。
+const ICON_KEYBOARD = '\u2328\uFE0F';
+const ICON_MOUSE = '\u{1F5B1}\uFE0F';
+const ICON_GAMEPAD = '\u{1F3AE}';
+
+function counterSeg(icon, iconClass, value, changed) {
+  return `<span class="seg${changed ? ' bump' : ''}"><span class="ico ico-${iconClass}">${icon}</span><span class="num">${value}</span></span>`;
 }
 
 window.petAPI.onCounter(({ keys, mouse, gamepad }) => {
@@ -449,10 +456,10 @@ window.petAPI.onCounter(({ keys, mouse, gamepad }) => {
   const mChanged = lastCounter.mouse !== -1 && mouse !== lastCounter.mouse;
   const gChanged = lastCounter.gamepad !== -1 && gamepad !== lastCounter.gamepad;
   counterEl.classList.remove('hidden');
-  let html = `${counterSeg('⌨', keys, kChanged)}<span class="dot">·</span>${counterSeg('🖱', mouse, mChanged)}`;
+  let html = `${counterSeg(ICON_KEYBOARD, 'key', keys, kChanged)}<span class="dot">·</span>${counterSeg(ICON_MOUSE, 'mouse', mouse, mChanged)}`;
   // 手柄段只在今日真的用过手柄时出现，避免对无手柄用户造成干扰
   if (gamepad > 0 || lastCounter.gamepad > 0) {
-    html += `<span class="dot">·</span>${counterSeg('🎮', gamepad, gChanged)}`;
+    html += `<span class="dot">·</span>${counterSeg(ICON_GAMEPAD, 'pad', gamepad, gChanged)}`;
   }
   counterEl.innerHTML = html;
   lastCounter = { keys, mouse, gamepad };

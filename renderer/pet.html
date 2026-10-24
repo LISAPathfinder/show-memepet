@@ -22,7 +22,30 @@
     <div class="bottom-row">
       <span id="admin-lamp" class="admin-lamp"></span>
       <div id="counter" class="counter hidden"></div>
-      <button id="menu-gear" title="打开菜单">⚙</button>
+      <button id="menu-gear" title="打开菜单" aria-label="打开菜单">
+        <!-- 票 14-H 第四轮：齿轮改用内联 SVG。字符「⚙」的墨迹位置由字体与位图缩放共同决定，
+             scale=1 与 scale=2 下的重心偏移不成比例（实测 -0.08 vs -0.60 DIP），一个 px 补偿喂不饱两个档；
+             SVG 的几何由 viewBox 决定，任意缩放下都按矢量绘制、严格居中。 -->
+        <svg class="gear-ico" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+          <defs>
+            <mask id="gear-hole">
+              <rect width="16" height="16" fill="#fff" />
+              <circle cx="8" cy="8" r="2" fill="#000" />
+            </mask>
+          </defs>
+          <g fill="currentColor" mask="url(#gear-hole)">
+            <circle cx="8" cy="8" r="5" />
+            <rect x="7.1" y="0.8" width="1.8" height="2.8" rx="0.5" />
+            <rect x="7.1" y="0.8" width="1.8" height="2.8" rx="0.5" transform="rotate(45 8 8)" />
+            <rect x="7.1" y="0.8" width="1.8" height="2.8" rx="0.5" transform="rotate(90 8 8)" />
+            <rect x="7.1" y="0.8" width="1.8" height="2.8" rx="0.5" transform="rotate(135 8 8)" />
+            <rect x="7.1" y="0.8" width="1.8" height="2.8" rx="0.5" transform="rotate(180 8 8)" />
+            <rect x="7.1" y="0.8" width="1.8" height="2.8" rx="0.5" transform="rotate(225 8 8)" />
+            <rect x="7.1" y="0.8" width="1.8" height="2.8" rx="0.5" transform="rotate(270 8 8)" />
+            <rect x="7.1" y="0.8" width="1.8" height="2.8" rx="0.5" transform="rotate(315 8 8)" />
+          </g>
+        </svg>
+      </button>
     </div>
   </div>
   <!-- 纯函数先加载：BOX_PAD / BOX_EPSILON / boxSignature 的真源在 core/interactive-box.js（票 0a-2），

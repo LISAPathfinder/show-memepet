@@ -242,12 +242,25 @@ body[data-state="sleep"] .pet-body {
 .counter {
   margin-top: 0;
   white-space: nowrap; /* 计数一行放下：窗口已拓宽到 300，禁换行防将来数字变长又折行 */
+  /* 票 14-H：底行五元素的中心改由「盒中心」决定。行盒基线 + 字体度量会随字体回退漂移，
+     而 flex 居中只认盒子几何——这是唯一能被人眼与断言同时复现的口径 */
+  display: flex;
+  align-items: center;
+}
+
+/* 上一条的 display:flex 会盖掉 .hidden（同优先级、且 .hidden 定义在前），单独补一条兜底 */
+.counter.hidden {
+  display: none;
 }
 
 #menu-gear {
   width: 26px;
   height: 26px;
   flex: none;
+  /* 票 14-H：齿轮字符按盒居中，不靠 line-height 凑——它与计数条图标、管理员灯要在同一条中心线上 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
   border: none;
   background: rgba(0, 0, 0, 0.45);
@@ -262,17 +275,68 @@ body[data-state="sleep"] .pet-body {
   background: rgba(0, 0, 0, 0.65);
 }
 
+/* 票 14-H 第四轮：齿轮改成内联 SVG 后，不再需要任何垂直补偿。
+   前几轮试过 measureText 度量、逐像素重心、按缩放比线性补——都被同一件事绊住：
+   字符「⚙」（U+2699，无 VS16）的墨迹位置既取决于字体回退，又随 petScale 位图缩放非线性变化
+   （实测 scale=1 偏 0.08 DIP、scale=2 偏 0.60 DIP，一个固定 px 喂不饱两档）。
+   SVG 用 viewBox 定几何 ⇒ 任意缩放都是矢量绘制、等比居中。 */
+#menu-gear .gear-ico {
+  width: 15px;
+  height: 15px;
+  display: block;
+  fill: currentColor;
+}
+
 .counter .seg {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* 票 14-H 修正（同日第二轮）：要的不是「图标之间互相对齐」，而是**图标在胶囊里上下边距一致**。
+   上一版用 measureText 的 actualBoundingBox 推差值、给 ⌨/🎮 加 +2px 下移，方向搞反了——彩色 emoji 的
+   实际像素比 measureText 报的更低（字形在 em 盒里有下降偏置），于是一补反而更偏下。
+   这一版改用 canvas **逐像素**扫描真实墨迹，再按「基线在 13px 行盒里的位置」换算成盒内坐标：
+   U+FE0F 那套 emoji 字体 fontAsc/Desc = 14/3 ⇒ 基线在 12，墨迹中心：⌨ 9.0 / 🖱 7.0 / 🎮 8.5，
+   盒中心 6.5 ⇒ 需要 -2.5 / -0.5 / -2.0。数字（雅黑 13/3、基线 11.5、墨迹中心 6.0）只差 0.5，不动。
+   ⚠ 这组数是「13px + Segoe UI Emoji」的实测值；换字号/换字体要重扫（逐像素，别用 measureText）。 */
+.counter .seg .ico-key {
+  transform: translateY(-2.5px);
+}
+
+.counter .seg .ico-pad {
+  transform: translateY(-2px);
+}
+
+.counter .seg .ico-mouse {
+  transform: translateY(-0.5px);
+}
+.counter .seg .ico {
+  font-family: 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.counter .seg .num {
+  line-height: 1;
+  /* 雅黑 13px 的墨迹中心在盒内 6.0（盒中心 6.5）⇒ 下移 0.5 才与图标同一条中线 */
+  transform: translateY(0.5px);
 }
 
 .counter .dot {
+  display: inline-flex;
+  align-items: center;
   margin: 0 6px;
+  line-height: 1;
+  /* 「·」只有 1px 高，1px 的调整会让差从 +1 直接翻到 −1 ⇒ 取 0.5 才落在正中 */
+  transform: translateY(-0.5px);
   opacity: 0.6;
 }
 
+/* 票 14-H 第五轮：这里原本写着 display: inline-block —— 它会顶掉 `.counter .seg` 的 inline-flex
+   （同优先级别、且这条在后面），于是数字一跳变就退回基线排布，图标看着又偏下了。
+   动画类只该管动画，不该改布局：display 交给 `.seg`。 */
 .counter .bump {
-  display: inline-block;
   animation: bump 0.2s ease;
 }
 

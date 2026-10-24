@@ -3,13 +3,19 @@
 //   1) 走真实路径隐藏（renderer 的 menuAction('hide-pet')，与点菜单是同一条 IPC）；
 //   2) 断言窗口还在但不可见（hide 不是 close）、进程没退；
 //   3) 注入一个 F24 按键（没有应用会占用），断言计数仍在涨 —— 证明「后台继续运行」；
-//   4) 恢复显示。
+//   4) 恢复显示（**真入口**：第二实例 → second-instance → showPet 重建，票 14-I 改）。
+//      旧版用 CDP 同句柄 `showInactive()` 收场，那正是 PITFALLS §95 的坏态：外壳可见、渲染子窗
+//      被 Chromium 藏起来，点击全丢。件自己把场地弄脏，下一件（verify-input-route-heal）必红，
+//      且产品的自检为救场会重建一次、留下 30s 冷却窗，把再下一件也带红。
 // 用法（先起带调试端口的实例）：
 //   PET_USER_DATA_DIR=<临时目录> npx electron --inspect=9229 --remote-debugging-port=9333 .
 //   node tools/verify-hide.js
 // 托盘图标本身是原生 UI，这里只验证它没创建失败（日志无「托盘图标创建失败」）+ 显隐行为，
 // 图标长什么样、左键/右键菜单由人眼确认。
 const koffi = require('koffi');
+const path = require('path');
+// 票 14-I：显示走用户真入口（第二实例 → second-instance → showPet 重建），不用同句柄 showInactive
+const { showPetBySecondInstance } = require('./lib-show-pet');
 const user32 = koffi.load('user32.dll');
 // 注入按键用系统级 keybd_event（不是 Electron 内部 API）：这样测的是「隐藏后系统钩子还在收键」
 const keybd_event = user32.func('void __stdcall keybd_event(uint8 bVk, uint8 bScan, uint32 dwFlags, uintptr dwExtraInfo)');
@@ -88,19 +94,17 @@ async function main() {
   }
   console.log(`计数：隐藏前 ${t0} → 隐藏后 ${t1}`);
 
-  // 恢复显示（与 showPet 里同一套底层调用）
-  await mainProc.evaluate(`
-    (() => {
-      const { BrowserWindow } = process.mainModule.require('electron');
-      const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
-      w.showInactive();
-      w.setAlwaysOnTop(true, 'screen-saver');
-      return 'shown';
-    })()
-  `);
-  await sleep(600);
+  // 恢复显示走**真入口**（票 14-I）：再起一个实例撞单实例锁 → second-instance → showPet() 重建。
+  // 判据锚是应用日志「显示桌宠（已重建窗口句柄」——真入口没走通时它是前置问题（exit 3），
+  // 不是产品行为不符预期，不能混进断言失败。
+  const revived = await showPetBySecondInstance({ repoRoot: path.join(__dirname, '..'), timeoutMs: 15_000 });
+  if (!revived.ok) {
+    console.error(`前置不满足（exit 3）：真入口显示没走通（${revived.ms}ms 内日志无「显示桌宠（已重建窗口句柄」行，日志 ${revived.logPath}）`);
+    process.exit(3);
+  }
+  await sleep(800); // 等新窗口页面合成（子窗可见是下一件的前置，这里多给一拍）
   const shown = await petState();
-  console.log('恢复显示后：', JSON.stringify(shown));
+  console.log(`恢复显示后（真入口重建，${revived.ms}ms）：`, JSON.stringify(shown));
 
   const ok =
     before.visible === true &&

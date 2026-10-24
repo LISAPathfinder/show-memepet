@@ -17,6 +17,11 @@
 //   PET_USER_DATA_DIR=<临时目录> SHOWCASE_DATA_DIR=<同一临时目录> \
 //     npx electron --inspect=9229 --remote-debugging-port=9333 .
 //   node tools/verify-scale.js
+// ⚠ 「固定窗 600×600」（票 14-I 口径修正）：600 是 DIP 名义值，主进程 `getBounds()` 在非整数
+//   缩放下回读会取整（本机 1.13 DSF：首启实测 605×605，与移动窗口无关）。所以主进程侧断言
+//   一律「尺寸 == 首测锚（零变化）」，不再手抄 600；渲染端 `#pet-root` 的 600（CSS px）照旧。
+//   摆位走 `tools/lib-window.js` 的 SetWindowPos——`setPosition` 每往返一次涨 2~3px
+//   （605→638/12 轮），既伪造「固定窗」读数也把脏场地留给下一件。件尾把位置还回入场位。
 // 退出码：0 = 全过；1 = 断言不符；3 = 前置不满足（调试端口连不上 = 隔离实例没起，非被测物坏），
 //         stderr 会打出该起的命令。跑完把 petScale 恢复为 1。
 // ⚠ 双实例场地（装机版同时在跑）时本件照跑（无占用闸门）但读数可信度降一级（票 11-N 前置提示）。
@@ -39,6 +44,10 @@ const ROOT = (() => {
 })();
 const CFG_REQ = `process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))})`;
 const identity = require('../identity');
+// 票 14-I：摆位走原生 SetWindowPos(SWP_NOSIZE)——Electron 的 setPosition 在 1.13 缩放下
+// 每次把窗口尺寸涨 2~3px（实测 605→638 / 12 轮往返），件里摆两次就把「固定窗 600」的读数
+// 打成 605/606，且脏场地留给下一件。产品侧早已改走同一 API（main.js movePetWindowTo，§98）。
+const { placeWindow } = require('./lib-window');
 
 // 产品同款回挪期望（票 11-N，与 main.js pet:scale-end 的 :2617–2626 同式）：
 // s 必须取**缩放后**的新值；wa 用与回挪同源的 getDisplayNearestPoint(起点).workArea。
@@ -93,7 +102,8 @@ function check(name, actual, expect) {
   console.log(`  ${ok ? 'PASS' : 'FAIL'} ${name}: 实际=${JSON.stringify(actual)} 期望=${JSON.stringify(expect)}`);
 }
 
-const PET_WINDOW = 600; // 固定窗边长（与 main.js PET_WINDOW_SIZE 一致）
+// 固定窗边长不再以常量参与断言（票 14-I）：主进程 bounds 与渲染端 viewport 都按首测/内建值锚定。
+// 旧常量 600 是 DIP 名义值，1.13 缩放下回读恒偏（PITFALLS §105）。
 
 async function main() {
   // 前置类探测（票 11-E 任务 6a）：连不上调试端口 = 隔离实例没起，属「环境不满足」而非
@@ -119,7 +129,7 @@ async function main() {
         const { BrowserWindow } = process.mainModule.require('electron');
         const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
         const b = w.getBounds();
-        return JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height });
+        return JSON.stringify({ x: b.x, y: b.y, width: b.width, height: b.height, hwnd: w.getNativeWindowHandle().readBigUInt64LE(0).toString() });
       })()
     `).then(JSON.parse);
   const readConfig = () =>
@@ -139,6 +149,8 @@ async function main() {
           rootW: Math.round(rr.width),
           rootRight: Math.round(rr.right),
           rootBottom: Math.round(rr.bottom),
+          innerW: Math.round(window.innerWidth),
+          innerH: Math.round(window.innerHeight),
         });
       })()
     `).then(JSON.parse);
@@ -182,20 +194,27 @@ async function main() {
   // 起点自设（票 11-N）：不再沿用「机器上桌宠当时停哪」。setPosition 与 config.petPosition
   // 同步写（scaleEnd 的回挪分支只在位移非零时写 config，非贴边零位移时 config 必须已是起点值），
   // 并回读 bounds 作为「起点自设生效」的实现证据。
+  // 票 14-I：摆位改 SetWindowPos（位置-only）。setPosition 会把整窗 rect 按 DIP→物理→DIP
+  // 往返重设，1.13 缩放下每次 +2~3px——既污染本件的「固定窗」读数，也把脏场地留给下一件。
   const placeAt = async (x, y) => {
     const wa = JSON.parse(
       await mainProc.evaluate(
         `(() => { const { screen } = process.mainModule.require('electron'); return JSON.stringify(screen.getDisplayNearestPoint({ x: ${x}, y: ${y} }).workArea); })()`
       )
     );
+    const phys = JSON.parse(
+      await mainProc.evaluate(
+        `(() => {
+          const { BrowserWindow, screen } = process.mainModule.require('electron');
+          const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
+          const p = screen.dipToScreenPoint({ x: ${x}, y: ${y} });
+          return JSON.stringify({ x: Math.round(p.x), y: Math.round(p.y), hwnd: w.getNativeWindowHandle().readBigUInt64LE(0).toString() });
+        })()`
+      )
+    );
+    if (!placeWindow(Number(phys.hwnd), phys.x, phys.y)) throw new Error(`SetWindowPos(${phys.x},${phys.y}) 返回 false`);
     await mainProc.evaluate(
-      `(() => {
-        const { BrowserWindow } = process.mainModule.require('electron');
-        const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
-        w.setPosition(${x}, ${y});
-        process.mainModule.require(${JSON.stringify(path.join(ROOT, 'config.js'))}).set('petPosition', { x: ${x}, y: ${y} });
-        return 'placed';
-      })()`
+      `(() => { ${CFG_REQ}.set('petPosition', { x: ${x}, y: ${y} }); return 'placed'; })()`
     );
     await sleep(300); // 等一拍落稳
     return wa;
@@ -210,6 +229,9 @@ async function main() {
     return fs.readFileSync(p, 'utf8').split(needle).length - 1;
   };
 
+  // 件入场读数（票 14-I）：件尾要把它还回去——本件会把窗口摆到 (700,600) 再摆到 (−200,−200)
+  // 并触发贴边回挪，不让它复位就等于给下一件留脏场地（旧行为）。
+  const entry = await readBounds();
   console.log('⓪ 起点自设（票 11-N）：窗口摆到非贴边 T1 起点 (700,600) + config 同步');
   const waT1 = await placeAt(700, 600);
   const b0 = await readBounds();
@@ -217,8 +239,14 @@ async function main() {
   const c0 = await readConfig();
   check('起点自设生效：config petPosition == (700,600)', [c0.petPosition.x, c0.petPosition.y], [700, 600]);
 
-  console.log('① 初始态（固定窗）');
-  check('初始窗口 600×600（固定窗不再随缩放变）', [b0.width, b0.height], [PET_WINDOW, PET_WINDOW]);
+  // 票 14-I：「固定窗 600×600」在非整数 DIP 缩放下**无法用主进程 bounds 判**——1.13 缩放下
+  // BrowserWindow({width:600}) 建出来回读就是 605×605（DIP→物理→DIP 往返取整），拿 600 做
+  // 绝对断言在本机恒假红（14-G 记录的 605/606 就是它，不是污染）。固定窗的可测语义是
+  // **尺寸零变化**：以首测为锚，拖拽中/松手后/恢复后都必须与它逐像素相同。渲染端的 600 口径
+  // （#pet-root 右下角）不受影响，照旧断言。
+  const BASE_WIN = [b0.width, b0.height];
+  console.log(`① 初始态（固定窗）：窗口 ${BASE_WIN[0]}×${BASE_WIN[1]}（首测锚；1.13 缩放下 600 DIP 名义回读非 600）`);
+  check('窗口是正方形（PET_WINDOW_SIZE 的 DIP 回读形态；被拖成矩形即回归）', b0.width === b0.height, true);
   check('初始 petScale', c0.petScale, 1);
 
   console.log('② Ctrl 注入 + 拖手柄到 1.1');
@@ -230,18 +258,20 @@ async function main() {
   const b1 = await readBounds();
   const r1 = await readRenderer();
   const c1 = await readConfig();
-  check('拖拽中窗口纹丝不动（600×600，零原生操作）', [b1.width, b1.height], [PET_WINDOW, PET_WINDOW]);
+  check('拖拽中窗口纹丝不动（尺寸 == 首测锚，零原生操作）', [b1.width, b1.height], BASE_WIN);
   check('拖拽中 config 不写盘（松手才持久化）', c1.petScale, 1);
   check('渲染端 transform 即时应用', r1.scale, 1.1);
   check('容器 rect 等比变大（穿透适配证据）', r1.rootW, Math.round(300 * 1.1));
-  check('容器右下角钉在 (600,600)（右下角锚定证明）', [r1.rootRight, r1.rootBottom], [PET_WINDOW, PET_WINDOW]);
+  // 票 14-I：这条同 ① 一样不许手抄 600——渲染端 viewport 是窗口的 DIP 实测值（本机 605 CSS px），
+  // 锚定语义是「#pet-root 右下角 == viewport 右下角」，用 innerWidth/innerHeight 现算即更强。
+  check('容器右下角钉在窗口右下角（右下角锚定证明）', [r1.rootRight, r1.rootBottom], [r1.innerW, r1.innerH]);
 
   console.log('③ 同一拖拽继续到 1.5');
   await dragMove(100); // 累计 +100px = +0.5（起始 1.0）
   await sleep(120);
   const b2 = await readBounds();
   const r2 = await readRenderer();
-  check('窗口仍 600×600', [b2.width, b2.height], [PET_WINDOW, PET_WINDOW]);
+  check('窗口尺寸仍 == 首测锚', [b2.width, b2.height], BASE_WIN);
   check('transform 到 1.5', r2.scale, 1.5);
   check('容器 rect 450', r2.rootW, Math.round(300 * 1.5));
 
@@ -251,7 +281,7 @@ async function main() {
   const c2 = await readConfig();
   const b2b = await readBounds();
   check('config 持久化 1.5', c2.petScale, 1.5);
-  check('窗口仍 600×600（松手也不改窗口）', [b2b.width, b2b.height], [PET_WINDOW, PET_WINDOW]);
+  check('窗口尺寸仍 == 首测锚（松手也不改窗口）', [b2b.width, b2b.height], BASE_WIN);
   // 票 11-N T1：非贴边起点 (700,600) 缩放后必须**零位移**——锁「回挪不得无条件平移窗口」。
   // 期望按产品同款公式现算（s 取缩放后新值 1.5），本场地应得 (700,600) 本身。
   const expT1 = expectedAfterScale(700, 600, c2.petScale, waT1);
@@ -352,7 +382,8 @@ async function main() {
   await sleep(150);
   check('恢复后 config petScale=1', (await readConfig()).petScale, 1);
   check('恢复后 transform 回 scale(1)', (await readRenderer()).scale, 1);
-  check('窗口仍 600×600', [(await readBounds()).width, (await readBounds()).height], [PET_WINDOW, PET_WINDOW]);
+  const b9 = await readBounds();
+  check('窗口尺寸仍 == 首测锚', [b9.width, b9.height], BASE_WIN);
 
   console.log('⑩ T2 贴左缘 (−200,−200)（票 11-N）：缩放后必须按内容矩形回挪');
   // 起点自设同 ⓪；contentX = −200 + (600 − 450) = −50 < wa.x → 产品应回挪 dx=50。
@@ -392,6 +423,15 @@ async function main() {
   await sendCtrl(false);
   await sleep(150);
   check('⑩b 恢复后 config petScale=1', (await readConfig()).petScale, 1);
+
+  // 件尾净场（票 14-I）：位置回入场位 + petPosition 置 null。旧版本把窗口留在 (−150,−200) 出屏，
+  // 由下一件的复位拍写回——而那次写回用的是 setPosition，每写一次窗口涨 2~3px，等于「修场地」
+  // 在恶化场地。位置恢复后 petPosition 置 null（产品语义：下次自己按默认公式落位）。
+  // 尺寸不在这里重建：窗口尺寸若已漂，按基线物理值恢复是装置复位拍的职责（件不知道基线）。
+  await placeAt(entry.x, entry.y);
+  await mainProc.evaluate(`(() => { ${CFG_REQ}.set('petPosition', null); return 'cleared'; })()`);
+  const bEnd = await readBounds();
+  check('件尾净场：窗口回到入场位', [bEnd.x, bEnd.y], [entry.x, entry.y]);
 
   console.log(failed === 0 ? '\n✓ Ctrl+拖拽缩放链路全部通过' : `\n✗ ${failed} 项断言不过`);
   process.exit(failed === 0 ? 0 : 1);

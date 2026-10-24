@@ -25,6 +25,10 @@
 // 把光标按回命中点，但人手拖着晃仍可能拉长触发时间，重跑即可。
 const fs = require('fs');
 const path = require('path');
+// 票 14-G：aim 是 DIP（bounds + 上报盒都是 DIP），SetCursorPos 吃物理像素，换算交给共享库
+const { readDipScale } = require('./lib-cursor');
+// 票 14-I：摆位走 SetWindowPos——Electron setPosition 每次往返把窗口尺寸涨 2~3px（§98/§104）
+const { placeWindow } = require('./lib-window');
 
 // §96（2026-10-10 票）：CDP 表达式 require 配置必须用绝对路径（大小写与产品解析一致），
 // 否则与产品 config 分裂成两个缓存副本——装置写的开关产品读不到。只能 realpathSync.native。
@@ -106,6 +110,9 @@ function check(name, ok, detail) {
 async function main() {
   const waitSec = Number(process.argv[2]) || 7;
   const mainProc = await connect(9229, (ts) => ts.find((t) => t.type === 'node') || ts[0]);
+  // 票 14-G：DIP→物理的换算比；注意别和下面的 petScale（产品缩放配置）混为一谈
+  const DIP_SCALE = await readDipScale(mainProc);
+  const putCursor = (p) => SetCursorPos(Math.round(p.x * DIP_SCALE), Math.round(p.y * DIP_SCALE));
   const renderer = await connect(9333, (ts) => ts.find((t) => (t.url || '').endsWith('pet.html')));
 
   // 前置：cursorFleeEnabled 必须为 true（本件测的就是这条路径，false=白跑）
@@ -119,17 +126,30 @@ async function main() {
   const scale = Number(cfg.scale) || 1;
 
   // 默认把桌宠搬到屏幕中间：下方有余量，planFlee 才有确定解（默认位贴右下角会让不开）
-  await mainProc.evaluate(`
-    (() => {
-      const { BrowserWindow, screen } = process.mainModule.require('electron');
-      const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
-      if (!w) return '找不到桌宠窗口';
-      const wa = screen.getPrimaryDisplay().workArea;
-      const b = w.getBounds();
-      w.setPosition(Math.round(wa.x + wa.width / 2 - b.width / 2), Math.round(wa.y + wa.height / 2 - b.height / 2));
-      return 'moved';
-    })()
-  `);
+  // 票 14-I：位置-only 原生移动（DIP 目标 → 产品同款 dipToScreenPoint 转物理，装置侧下发）
+  const center = JSON.parse(
+    await mainProc.evaluate(`
+      (() => {
+        const { BrowserWindow, screen } = process.mainModule.require('electron');
+        const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
+        if (!w) return JSON.stringify({ error: '找不到桌宠窗口' });
+        const wa = screen.getPrimaryDisplay().workArea;
+        const b = w.getBounds();
+        const x = Math.round(wa.x + wa.width / 2 - b.width / 2);
+        const y = Math.round(wa.y + wa.height / 2 - b.height / 2);
+        const p = screen.dipToScreenPoint({ x, y });
+        return JSON.stringify({ hwnd: w.getNativeWindowHandle().readBigUInt64LE(0).toString(), px: Math.round(p.x), py: Math.round(p.y) });
+      })()
+    `)
+  );
+  if (center.error) {
+    console.error('前置不满足（exit 3）：' + center.error);
+    process.exit(3);
+  }
+  if (!placeWindow(center.hwnd, center.px, center.py)) {
+    console.error('前置不满足（exit 3）：SetWindowPos 摆位失败（句柄失效？）');
+    process.exit(3);
+  }
   await sleep(500);
 
   const readPet = () =>
@@ -161,13 +181,13 @@ async function main() {
   const logBeforeLen = logBeforeText.length;
   const uncaughtBefore = countIn(logBeforeText, 'uncaughtException');
 
-  console.log(`光标移到命中区中心 ${aim.x},${aim.y}（窗口 ${before.x},${before.y} scale=${scale}），每 500ms 按回原位，等 ${waitSec}s + 走路完成…`);
-  SetCursorPos(aim.x, aim.y);
+  console.log(`光标移到命中区中心 ${aim.x},${aim.y}（窗口 ${before.x},${before.y} scale=${scale} DIP比=${DIP_SCALE}），每 500ms 按回原位，等 ${waitSec}s + 走路完成…`);
+  putCursor(aim);
 
   // 触发让开（等待期按住光标防用户鼠标干扰）→ 再等走路动画完成（位置连续 3 拍不变）
   for (let i = 0; i < waitSec * 2; i++) {
     await sleep(500);
-    SetCursorPos(aim.x, aim.y);
+    putCursor(aim);
   }
   let after = JSON.parse(await readPet());
   let stable = 0;

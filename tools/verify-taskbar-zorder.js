@@ -105,6 +105,12 @@ console.log(`桌宠窗口 HWND=0x${pet.hwnd.toString(16)}  rect=${JSON.stringify
 console.log(`矩形重叠=${overlap(petRect, barRect) ? '是（z 顺序影响观感）' : '否（互不相碰，仅记录链序）'}`);
 
 if (above.hit) {
+  // 头注释的语义是「上层**或不重叠**都算过」：z 序只影响观感，矩形不相碰时谁在上面都无所谓。
+  // 之前这里只判 z 链、没判重叠，桌宠挪到屏幕中部（不碰任务栏）时会被误判成「被盖住」——2026-10-23 实测。
+  if (!overlap(petRect, barRect)) {
+    console.log(`✓ 任务栏在 z 链上方 ${above.steps} 步，但两者矩形不重叠 ⇒ 观感无影响`);
+    process.exit(0);
+  }
   console.log(`✗ 桌宠被任务栏盖住：任务栏在 z 链上方 ${above.steps} 步处。若非刚被「反扑」的 3 秒窗口期，说明置顶重申没生效（查 PITFALLS §60）`);
   process.exit(1);
 }

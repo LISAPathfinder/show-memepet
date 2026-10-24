@@ -13,6 +13,7 @@
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 require('./lib-occupancy').assertNoBlockingInstances('verify-passthrough.js'); // 占用自检 exit 3（票 11-G 任务 4）
+const { readDipScale, moveCursorDip } = require('./lib-cursor'); // 票 14-G：DIP→物理换算（SetCursorPos 吃物理像素）
 function connectTarget(target) {
   return (async () => {
     if (!target) throw new Error('CDP 目标不存在');
@@ -76,14 +77,13 @@ const cursorPos = () => {
 };
 // moveTo 带回读校验：真实光标是共享资源（用户/其他程序都会动它），设完读回确认落点，
 // 不在目标 ±5px 内重试一次；仍不在则打印告警（读数可能被污染），由断言读数自证。
+// 入参是 DIP（件里一切几何都来自 DIP 口径），换算见 lib-cursor 文件头（票 14-G）。
 const moveTo = (x, y) => {
-  for (let i = 0; i < 2; i++) {
-    SetCursorPos(Math.round(x), Math.round(y));
-    const c = cursorPos();
-    if (Math.abs(c.x - x) <= 5 && Math.abs(c.y - y) <= 5) return true;
-  }
-  const c = cursorPos();
-  console.log(`⚠ SetCursorPos(${Math.round(x)},${Math.round(y)}) 后光标实际在 (${c.x},${c.y})——光标被外部移动，读数可能受污染`);
+  const r = moveCursorDip(x, y, SCALE);
+  if (r.ok) return true;
+  console.log(
+    `⚠ SetCursorPos(${r.physical.x},${r.physical.y}) 后光标实际在 (${r.actual.x},${r.actual.y})——光标被外部移动，读数可能受污染`
+  );
   return false;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -118,6 +118,8 @@ function judgePass(s, expectTransparent, label) {
 }
 
 const main = await connectTarget(await pickTarget(9229, (ts) => ts.find((t) => t.type === 'node') || ts[0]));
+// 票 14-G：件里所有几何都是 DIP，注入前必须换成物理像素；值取产品自己用的那个（不是 GetDpiForSystem）
+const SCALE = await readDipScale(main);
 
 // 兜底：页面可能被 verify-main-passthrough 的上一轮运行留在 about:blank；不在就把 pet.html 装回去
 const petTarget = async () => {

@@ -1246,6 +1246,264 @@ verify/measure/probe）必须 grep 一遍日志 `uncaughtException`，非 0 就�
   3. **钳制用常量而不是实测几何，等于把上游行为写死成前提**。钳制的输入应该是「窗口现在多大」，
      不是「窗口应该多大」；这次两处都改了才收口，只改一处会留下「尺寸漂了但钳对了/钳错了但尺寸没漂」的半绿。
 
+### 99. 任务栏按钮「不该有」的那一条会回来：`skipTaskbar` 是 shell 侧登记，不是窗口属性（票 14-D，2026-10-21）
+
+- **症状**（用户报，附任务栏截图）：任务栏里又出现桌宠图标，图标下还带「正在运行」横条。
+  要求写成一句话：**要么常驻、要么完全不出现**。§57 记过同族现象（当时是两条：一条纯透明、一条带宠），
+  1.0.30 把它收窄成「只剩一条纯透明条目」并**记成可接受的回归**（§67）——本轮用户明确不接受。
+- **定位（一手证据）**：用 koffi 直接 `CoCreateInstance(CLSID_TaskbarList)` → `HrInit` → `DeleteTab`
+  对桌宠进程的两个 HWND 各发一次（HRESULT 全 `0`），**用户肉眼确认按钮当即消失**。⇒ 那条按钮来自
+  **锚点窗**，且不是「窗口样式没设」，而是「shell 侧登记丢了」。
+- **根因**：`skipTaskbar` 在 Windows 上不是窗口样式位，而是 `ITaskbarList::DeleteTab` 向 explorer
+  做的**登记**；窗口本身没有任何位表达「我不进任务栏」。所以：
+  1. explorer 重建（崩溃自恢复、手动重启、部分显示拓扑变化）后登记作废，shell 重新枚举可见顶层窗口时
+     把锚点窗重新登记成一条看不见的按钮；
+  2. 开机自启那一轮任务栏可能还没起来，构造参数里的 `skipTaskbar` **无处可登记**，一次机会都没有。
+  桌宠窗不受影响是因为它有 `WS_EX_TOOLWINDOW`（shell 枚举时直接排除，§57 那一刀）；锚点窗**不能**挂
+  TOOLWINDOW——那会打掉任务管理器分组身份（§67 实测 5 条散开）。
+- **解法（票 14-D）**：`startTaskbarWatchdog()`（`main.js`）自持一个 `ITaskbarList`，**1s** 读
+  `GetShellWindow()`：句柄变了＝shell 重建 ⇒ 重建 COM 对象并立刻补删；**5s** 无条件补删一次
+  （覆盖读不出原因的重新登记）；另在 shell 从「读不到」变「读得到」时补一刀（开机自启那一轮）。
+  `DeleteTab` 对本来没有按钮的窗口是空操作、**不产生可见效果**，所以高频调用只有两次 COM 调用的代价；
+  反过来「AddTab/DeleteTab 交替翻转」会让按钮真的闪，别那么写。补删对象取
+  `BrowserWindow.getAllWindows()`（菜单/统计窗同属 `skipTaskbar: true`，同一风险面）。
+- **判据**：`tools/verify-taskbar-tabs.js`（`@runtime: shared`，6 断言）——诊断面在位 / 2.2s 内 ticks
+  增长（定时器真在跑）/ 产品**自己的**通道 `DeleteTab` 全 `S_OK`（不借仪器自建的 COM 对象）/
+  锚点窗无 TOOLWINDOW 且无 NOACTIVATE（形状前提：它确实是会被登记的那类窗）/ 桌宠窗有 TOOLWINDOW（免疫层）。
+  ⚠ 终判「任务栏里到底有没有那条按钮」**没有机器接口**（Win11 任务栏是 XAML，没有可枚举的 TB_BUTTON），
+  只有真人层：重启 explorer / 重启机器 ≥5 次，命中数应为 0。
+- **教训**：
+  1. **「不该出现的 UI 里没出现」不是可以靠一次设置解决的事**——凡是「向 shell/系统登记的」状态，
+     都要问「谁会在什么时候把这份登记冲掉」，并留一个重发点。§57 当时的写法（一次性 `skipTaskbar`
+     + 一个「低频回归可接受」的注解）把问题从验收清单里划掉了两年。
+  2. **可接受的回归要写清代价的承受者**。1.0.30 的取舍写的是「无功能损害（一条不可见条目）」，
+     但用户看到的是「应用在任务栏里有个按钮」——这类「不可见」只对开发者成立。
+  3. 判据分层老规矩又应验一次：能自动测的是**机制**（对象建得起来、调用返回 S_OK、定时器在跑、
+     窗口形状对不对），**视觉终判**只能由人给。别把机制绿当成功能绿（§63/§83 同族）。
+
+### 100. 静默安装的 `/D=` 写成正斜杠路径会把程序装到容器根，数据根随之漂到 `<容器名>-data`（票 14-D 出包轮，2026-10-21）
+
+- **症状**：1.1.5 覆盖安装后程序目录不在 `<容器>\bin\` 而在容器根；`<容器>\data` 里的真实数据（74 件、
+  `keys-2026-10-21.json`）**没有被使用**，应用改读旧的 `<容器名>-data\data`（9 月那批 20 件），
+  界面看着正常、计数像是「回到九月」。
+- **根因（两条叠加，缺一不发作）**：
+  1. 我这轮用 `Start-Process -ArgumentList '/S','/D=D:/Software/desktop-pet'` 传参——**NSIS 的 `/D=` 只认
+     反斜杠路径**，`D:/Software/desktop-pet` 被它按字面处理，装到了 `D:\Softwaredesktop-pet`（斜杠被吃掉一层）。
+     正确写法：`/D=D:\Software\desktop-pet`，且必须是**最后一个参数、不加引号**（§66 子坑 ① 的同胞）。
+  2. 用反斜杠重装后仍落在容器根，因为 `resources/installer.nsh` 的**下沉规则 ③**：容器根已有 `data\` / `skin\`
+     却没有 `bin\` 时**保守不动**（防旧卸载程序连带删数据，这个保守本身是对的）。而第一次装错时程序在
+     `D:\Softwaredesktop-pet\bin`，`D:\Software\desktop-pet\bin` 被旧卸载程序清空了 ⇒ 容器根只剩 data/skin、
+     没有 bin ⇒ 第二次安装按规则 ③ 装到根。
+  3. `config.js resolveUserRoot`：exe 目录名不是 `bin` ⇒ 走 ②「安装目录同级 `<安装目录名>-data\`」⇒ 数据根漂到
+     `D:\Software\desktop-pet-data`（旧结构残留目录），真数据留在容器根 `data\` 里没人读。
+- **解法（本轮实操，顺序别换）**：① 先把 `<容器>\data`（74 件）与 `<容器>\skin`（473 件）**整目录备份**出去；
+  ② 停实例，把容器根的程序文件**移动**（不是复制）进 `<容器>\bin\`，`data`/`skin` 原地不动，让容器形状回到「bin + data + skin」；
+  ③ 注册表卸载项的 `UninstallString`/`QuietUninstallString`/`DisplayIcon` 三条指向 `bin\`（安装器不写 `InstallLocation`）；
+  ④ 开始菜单快捷方式用 Electron `shell.writeShortcutLink(lnk,'create',{target,cwd,icon})` 重写，
+  **且必须用 `shell.readShortcutLink` 复核**——`.lnk` 里的 base path/relative path 是两套编码，直接扫字符串
+  会把旧路径读成「还在」或「没有」（本轮两种假读数都出现过）。
+- **教训**：
+  1. **「装完看版本号 + 看进程路径」不够**。这次两条都对（`FileVersion=1.1.5`、5 个进程都从新 exe 起），
+     但**数据根错了**——升级类动作的判据必须加一条「应用此刻读的是哪个数据根，里面最新那份计数的时间戳是多少」。
+  2. 静默安装参数是**本机不可复现于 CI** 的那类坑：写错一次就分裂一次数据根，且没有任何报错。
+     以后覆盖安装一律：先备份 `data\`/`skin\`、装完立刻核 `bin\` 形状 + 数据根文件名集 + 快捷方式目标。
+  3. 会话沙箱会把 `Start-Process` 拉起的常驻子进程在该次工具调用结束时收掉（与 bash 后台进程同族，PITFALLS §89）——
+     装完「进程数为 0」不等于装坏了；要留常驻实例必须用后台任务方式起。
+
+- **补记（同日 14:38：一次「延迟的第二条安装」把 `data\` 与 `skin\` 一起清空）**。症状：用户报「怎么数据清零了」
+  ——计数只剩 9/13~9/23 那批、皮肤 6 套变 2 套、`reminderIntervalMin` 30→45、`autoStart`/`autoStartAdmin` 回 false。
+  - **证据链（全是文件时间戳，不靠回忆）**：`<容器>\bin\Showcase.exe` 与 `app.asar` 的 **birth=14:38:07**
+    （mtime 仍是 14:27:12＝从同一个包复制）、`data`/`skin` 目录 **birth=14:38:10**、安装包 exe 的
+    **atime=14:38:13**、开始菜单 `.lnk` 被重写成带 `appUserModelId=com.showcase.app` 的安装器版本
+    （我手写的那份 description/AUMID 都不见了）⇒ 14:38:05–14:38:13 之间**真的跑了一次安装**。
+  - **为什么是「延迟」的**：`Start-Process -Verb RunAs -Wait` 在 NSIS 引导进程退出时就返回了，真正的提权安装体
+    可能还在等「先关掉正在跑的实例」（`petKillImage`/`CHECK_APP_RUNNING`）；我一停实例（14:37 那个被会话回收的
+    后台任务），它就在 14:38 继续跑完。
+  - **为什么会连数据一起删**：那次安装认定的旧安装位置是**容器根**（前一步规则 ③ 把程序装在了根），
+    升级流程的旧卸载器 `atomicRMDir $INSTDIR` 作用在根上 ⇒ `data\`、`skin\`、`bin\` 全被清掉；
+    接着新安装按规则 ④ 重新 `CreateDirectory data/skin`（于是两目录 birth 都是 14:38:10），
+    启动后 `migrateLegacyData` 只把旧结构里那 18 个 9 月文件 missing-only 补回来 ⇒ 看起来像「数据只剩 9 月」。
+  - **恢复**（本轮实操）：停实例 → 从 `showcase-build\pre-14d-backup`（14:33 的 74 件 + 473 件皮肤快照）
+    missing-only 补回 52 个计数文件 → 今日文件**逐键求和**合并（备份 4439 + 事故后新会话 24 = 4463，鼠标左键 3670）
+    → `config.json` 整份还原（`ac_color`/30 分钟/`autoStartAdmin`/位置 1661,473）→ 皮肤补 340 个文件回到 6 套 473 件
+    → 从快捷方式重启，日志确认计数在读（writeback 5s 后 total 仍 4463）。
+  - **教训**：
+    1. **升级/安装这类动作，装完必须立刻把 `data\`（和 `skin\`）的文件数＋最新文件名记下来**，下一次动作前再核一遍；
+       本轮是「装完 4 分钟后又跑了一次延迟安装」，中间没有任何人再看数据面。
+    2. 让安装器「等你关进程」是静默安装最坑的形态：`-Wait` 的返回**不代表安装结束**。要判结束就看目标文件
+       birth 时间与安装包 atime，不看进程退出码。
+    3. 一键恢复的前提是**事前备份**：`pre-14d-backup` 是这次唯一的救命数据（74+473 件）。以后覆盖安装前一律先备份，
+       并把「备份在哪」写进当次回复。
+
+### 101. 息屏/现代待机唤醒后「桌宠在、点不动」——渲染子窗口没回来，而自愈只监听 lock/unlock/suspend/resume（票 14-E，2026-10-22）
+
+- **症状**：桌宠可见、动画照跑、计数照记；点它、拖它、点齿轮全无反应。用户场景是「挂着不动一段、
+  系统 5 分钟自动息屏、**没有锁屏**」，回来就点不动了；从托盘退出重开立刻恢复。
+- **三层读数（前两层全绿，别用它们判「能点」）**：
+  1. 应用日志「穿透状态」= `可交互`；
+  2. 外壳 `EXSTYLE` 无 `WS_EX_TRANSPARENT`（主进程写的，正常）；
+  3. **`WindowFromPoint` 落点**：坏态 = 顶层 `Chrome_WidgetWin_1`，正常 = 子窗 `Chrome_RenderWidgetHostHWND`。
+  注入 6 次真实点击：坏态 **0/6** 「桌宠收到点击」，重启后同坐标 **6/6**。
+- **根因**：桌宠窗口是「外壳 + 渲染子窗」两层，**鼠标只进渲染子窗**。息屏 / S0 现代待机过程中 Chromium 把
+  子窗藏掉，唤醒后没有放回来。`WindowFromPoint` 会跳过不可见窗口 ⇒ 它返回外壳就是「子窗当时不可见」的证据。
+  产品的自愈挂在 `powerMonitor` 的 `lock-screen/unlock-screen/suspend/resume` 上，而**「仅关屏 / S0」这条路径
+  这几个事件一个都不发**（系统 `Kernel-Power` 566 记了 3 次 `SessionUnlock` + `InputHid`，产品侧
+  「重新同步穿透状态」最后一次停在 4 小时前）⇒ 重建从未触发，坏两小时无人知。
+  **反直觉**：真锁屏再解锁反而会自愈——正是「没锁屏」绕过了唯一能救它的代码。
+- **解法**：不补事件监听（漏一种成因就再坏一次），改按「子窗口在不在」自检——不依赖任何成因。
+  `main.js` `checkPetInputRoute()` 挂进既有 120ms 轮询、内部 2s 降频：`FindWindowExW` 取子窗，
+  不存在 / 不可见 / 与父窗尺寸差 >8px（实测差 1px）视为失联，**连续 2 拍**不健康且过 **30s 冷却** 就
+  `recreatePetWindow`（与 unlock/resume 同一条路径，闪约 0.2 秒）；诊断面 `__petRouteChecks/__petRouteHeals`。
+- **判据**：`tools/verify-input-route-heal.js`（shared，10 断言）用 `ShowWindow(子窗, SW_HIDE)` 注入等价故障，
+  **核心断言是 HWND 真的换了**，不是「子窗又可见」——Chromium 自己也可能把子窗放回来，那是代理指标
+  （红法 R2「只记日志不重建」正是 `heals` 计数绿而 HWND 不变）。
+- **排查/复现的两个坑**：
+  1. 想看落点就用 `probe-click-target`（2026-10-21 起会读子窗在不在）；只看 EXSTYLE 会得出「能点」的错误结论。
+  2. **别用 `SendMessage(HWND_BROADCAST, WM_SYSCOMMAND, SC_MONITORPOWER, 2)` 自动复现息屏**：同步广播在系统
+     进待机时**阻塞不返回**，整条命令被冻死（本轮实测被 SIGTERM），黑屏期间脚本也发不出唤醒输入。
+     复现请用「藏子窗」，真机息屏唤醒归用户层（≥3 次，每次回来点一下并报命中数）。
+- 提交 `5c44e3f`。
+
+### 102. 「真实光标」判据件全红的两类场地原因：非 100% 缩放（DIP/物理错位）与全屏游戏（ClipCursor 零面积）（票 14-F 排查，2026-10-22）
+
+- **症状**：`run-runtime-ci` 共享批一次红 8~9 件，首行清一色是「该可交互时穿透位仍挂着」；
+  `verify-passthrough` 的步骤 1（脸上）与步骤 3（气泡盖住指针自愈）双失败，
+  而件的 `moveTo` 回读**显示光标确实落在它算出的脸中心**——看起来像产品穿透判定坏了。
+- **原因 A：非 100% 缩放机上的坐标系错位（本机 1.13，见 §98）**
+  - 读数：`SetCursorPos` 落点回读 = 脸中心（这是**物理像素**）；主进程 `screen.getCursorScreenPoint()`
+    返回同一点 ÷1.13；`display.size = 2266×1275`、`scaleFactor = 1.13`（物理 2560×1440）。
+  - 根因：产品侧（窗口 bounds / 命中区 / 光标判定）全用 **DIP**；件从 `bounds + 渲染端 CSS 上报盒`
+    算出的「脸中心」也是 **DIP**，却直接喂给 `SetCursorPos`（物理）⇒ 1.13 倍错位，光标永远在脸外，
+    `EXSTYLE` 自然保持穿透。**这是判据件的缺陷，不是产品缺陷**（产品内部 DIP 自洽，真机上照常可交互）。
+  - **排除法要点**：`GetDpiForSystem` / `GetDpiForMonitor` 在 node 进程里会回落 **96**（DPI awareness
+    并未真正生效），用它判断缩放会得出「100%，没问题」的错误结论——本轮就被骗过一次。
+    可信读数只有两条：**物理矩形 ÷ DIP bounds**，或起一个实例看 `scaleFactor`。
+  - 版本对照（本票必做）：同一探针在 **44.3.0 与 44.9.3 下读数完全同形**（1.13 / 2266×1275 / 光标 ÷1.13）
+    ⇒ 与 Electron 版本无关。**升级前后判据对不上时，先做这个同形对照，再谈回归。**
+  - 处置：出包验收前把显示缩放临时改回 100%（件跑绿再改回）；根治要给 shared 件加 DIP→物理换算
+    （抽一个共享函数统一 `SetCursorPos`，另立票，别在功能票里顺手改 28 件）。
+- **原因 B：前台全屏游戏把光标 ClipCursor 成零面积**
+  - 读数（同日星穹铁道在前台时）：`GetClipCursor = 1280,720 → 1280,720`（零面积）、
+    前台 `UnityWndClass` / `StarRail.exe`、`GetCursorInfo` 返回 false（光标被游戏隐藏）、
+    `SetCursorPos` 返回 **false**（沙箱内外都 false）、`SendInput` 返回 **1** 但光标纹丝不动。
+  - 危害：此时所有真实光标件都会假红，且「注入成功」的返回值会让人以为装置没问题。
+  - 处置：**开跑前先读 `GetClipCursor`**；矩形面积 < 屏幕 1/4 就当场地不可测，直接请用户退游戏，
+    别把读数当产品红去查代码。
+- **判据落差**：这两类原因都能让「装置全绿/全红」与「产品好坏」脱钩，与 §63/§83 同族——
+  读数全在，缺的是**场地前置断言**。下次给共享批加一条起手断言：缩放=1.0 且 clip 覆盖全屏，
+  不满足就整轮 exit 3 并点名原因（而不是逐件红 8 次）。
+
+### 103. 换 Electron 版本后 `dist/` 是空的，而 `npm install` 报「成功」（票 14-F，2026-10-22）
+
+- **症状**：改完 `package.json` 跑 `npm install`，9 秒返回「changed 1 package, and audited 293 packages」，
+  `node_modules/electron/package.json` 版本已正确，但 `node_modules/electron/dist/electron.exe` **不存在**；
+  此时 `npm start` / `npm run dist` / 任何运行时判据件都起不来。
+- **根因**：`package.json` 的 `allowScripts`（§32 那条 `npm install-scripts approve` 写的审批表）按
+  **精确版本**记账。换版本后旧键 `electron@44.3.0` 不再匹配实际安装的 44.9.3 ⇒ postinstall（下载并解压
+  二进制）没被批准执行。**npm 不把「安装脚本被跳过」当失败**，于是元数据对、二进制缺。
+- **解法**：① 改版本时**同时**改 `allowScripts` 的键；② 已经装缺的手动补：
+  `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node node_modules/electron/install.js`
+  - 必须显式带 `ELECTRON_MIRROR`：`.npmrc` 的 `electron_mirror` 只在 npm 运行时被注入成
+    `npm_config_electron_mirror`，手动 `node install.js` 不带，会直奔 GitHub（国内多半卡到超时）。
+- **判据**：`cat node_modules/electron/dist/version` 等于目标版本，且 `dist/electron.exe` 非零字节
+  （44.9.3 实测 246,819,840 B）。**「装完看一眼版本号」不够——版本号来自 `package.json`，不看 dist 看不出缺二进制。**
+
+
+### 104. 判据件用 `setPosition` 摆位 = 每摆一次窗口长 2~3px，装置「写回默认」反把场地越修越脏（票 14-I，2026-10-23）
+
+- **症状**：共享批里 3 件（`verify-cursor-sync` / `verify-flee-interaction` / `verify-input-route-heal`）
+  单跑全绿、全量必红，且越靠后的件越离谱；14-G 末轮的归因写成「件间连锁污染：前一件没复位」，
+  但装置明明有复位拍（每件前把脏场地写回默认）。
+- **根因**：§98 是同一件事的**产品侧**版本（拖拽把窗口顶出屏幕），修的是 `main.js movePetWindowTo`
+  → `SetWindowPos(SWP_NOSIZE)`。判据件与装置复位拍**没跟上**，还在用 Electron 的 `w.setPosition()`：
+  它按 DIP→物理→DIP 往返重设整窗 rect，1.13 缩放下每次取整 +2~3px（实测 24 拍 605×605 → 638×635，
+  +33px）。校验轮独立复现同一机理（另一种摆位节奏）：12 次调用 605×605 → **622×621**（≈1.4px/次、单调），
+  同场地 `SetWindowPos(SWP_NOSIZE)` **零净漂移**。⚠ **±2 容差的理由（14-J 校验轮更正本条初稿）
+  ——初稿把「±1 抖动」归给原点移动，错了**：12 档原点实测**物理尺寸恒 683×683**，随原点抖的是
+  **DIP 回读**（605/606 的四档组合），而复位拍的尺寸判据读的是 `GetWindowRect` 的**物理**值，
+  所以移动本身永远撞不到它。真正要挡的是 **`setBounds` 写回后的物理取整档**：683 → 撑到 707 →
+  写回后 684×684（差 1），这就是 ±2 而不是 0 的来由（14-J ★4 把 `SIZE_TOL` 改 0 后一轮只开火 1 次、
+  且正是这一档 684×683，反向坐实）。于是**复位拍这个「修复动作」本身在恶化场地**——
+  共享批每件前都写回一次，窗口单调变大，某些件的几何/命中判据必然炸。
+- **解法**：判据件与装置一律走 `tools/lib-window.js` 的 `placeWindow`（位置-only = `SWP_NOSIZE`），
+  不许再用 `setPosition`。**尺寸恢复不在 `placeWindow` 这一条路上**：桌宠窗 `resizable:false`，
+  `SetWindowPos` 带 cx/cy 被 `WM_GETMINMAXINFO` 钳在现值（ret=true 而尺寸纹丝不动），实测只能走
+  Electron `setBounds(基线 DIP)`——`placeWindow` 的四参形态只对可缩放窗口有效，别照着它给桌宠改尺寸。
+  装置复位拍读数由四→**六**（加「窗口物理尺寸 == 首启基线（±2）」与「渲染子窗在且可见」），
+  否则这类漂移会一路隐身到某件的几何断言才炸。
+- **判据**：`grep -n 'setPosition' tools/*.js` 只剩注释（`verify-drag-clamp` 已先走过这条）。
+  红法 R4：把共享实例窗口撑到基线+20 → 下一件复位拍必须点名「窗口尺寸 … ≠ 基线 …」并写回。
+
+
+### 105. `getBounds()` 的「600×600」在非整数缩放下回读不是 600——绝对断言恒假红（票 14-I，2026-10-23）
+
+- **症状**：`verify-scale` 里 6 条绝对 600 断言全红，实测 **605/605** 或 606——其中 5 条是主进程
+  `[b.width, b.height]`，第 6 条是渲染端 `#pet-root` 右下角 `[rootRight, rootBottom]`，**它也是 605,605
+  而不是 600**（校验轮补测，本条初稿写成「渲染端全绿」是错的）。14-G 把这条记成「`setPosition` 每次 +1」，只对一半。
+- **根因**：`BrowserWindow({ width: 600 })` 是 **DIP 名义值**，Chromium 在 1.13 DSF 下按物理像素建窗，
+  `getBounds()` 回读时再除回 DIP，往返取整 ⇒ 首启就是 605×605（与有没有移动窗口无关）。
+  `getBounds()` 与 `getBoundingClientRect()` 是两个口径，但**两个都不是 600**：校验轮实测渲染端
+  `innerWidth×innerHeight=605×605`、`devicePixelRatio=1.13`、`#pet-root` 右下角=**605,605**
+  （CSS px 本身就是取整后的 605）⇒ 旧的第 6 条绝对 600 断言（渲染端右下角）在本机同样恒假红。
+- **解法**：主进程 bounds 侧断言「固定窗」时用**相对首测零变化**（`BASE_WIN = [b0.width, b0.height]`），
+  不再手抄 600；渲染端锚改按 `innerWidth/innerHeight` 现算（右下角 == viewport 右下角，比钉常量更强）。
+  附带保留 `width === height`（正方形不变量，抓「被拖成矩形」）。
+- **教训**：`AppliedDPI=96`、系统缩放 100% 都挡不住 Chromium 自己算出 1.13（§102），
+  所以「DIP 坐标 == 设计常量」这类等式在判据里一律不许当锚——锚要么现算，要么用相对变化。
+
+
+### 106. 判据件收场用同句柄 `showInactive()` = 自己把场地弄成坏态，还把「自愈冷却」传染给下一件（票 14-I，2026-10-23）
+
+- **症状**：`verify-hide` 永远是绿的，紧跟其后的 `verify-input-route-heal` 在全量里必红、单跑必绿；
+  再往后的 `verify-main-passthrough` 也跟着红。三件的红互相「换着来」，归因写成「件间连锁污染」后
+  依然治不好。
+- **根因**（三层，缺一层都解释不完整）：
+  1. `verify-hide` 的「恢复显示」用 CDP 同句柄 `w.showInactive()`，这正是 §95 的坏态——外壳
+     `isVisible()===true`、EXSTYLE 正常，但 Chromium 把渲染子窗藏了，点击全丢；
+  2. 产品侧 `checkPetInputRoute`（票 14-E）会在 1.2s 内发现子窗不在并**重建窗口**救场。这是一次
+     **为别人的错买单**的重建，它顺手把 `PET_ROUTE_HEAL_COOLDOWN_MS = 30000` 的冷却窗打开；
+     （校验轮实测时间线：`showInactive` 后 **0s** 外壳 `IsWindowVisible=true` 而子窗 `=false`、
+     自愈耗时（14-J 两方独立实测，带宽 0.4s）：执行方细分到 **+0.8s** 父窗与子窗句柄双双更换；
+     校验轮探针 **+1.1s 子窗仍不可见、+1.2s 读到「窗口已不存在」**（＝正处在重建的瞬间）。
+     ⇒ 装置那段 8×200ms=1.6s 恢复窗**够等到自愈、但余量只剩 ≤0.5s**（本条初稿按 3s 采样上界写成
+     「都会落到重启」，14-J ★2 两轮实测均为「已写回默认，本件继续」＋重启计数 0，已推翻）。
+     ⚠ **新竞态（14-J 校验轮查出，未开火但形状已到）**：产品自愈就是「销毁旧窗 → 建新窗」，
+     中间有一瞬 `getAllWindows().find(url.endsWith('pet.html'))` **返回空** ⇒ 轮询里那次 `fieldRead()`
+     抛 `pet-window-missing`，按现有错误处理**该件记 exit 3＝变 skip**（不是红、也不修场地）。
+     加长恢复窗或让轮询容忍这一瞬缺失，二者都要配红法，别顺手改成静默继续跑。
+     **已于票 14-K 修复（2026-10-24）**：恢复窗 12×250ms=3.0s＋轮询容忍「窗口暂时不存在」（missing 计数、
+     不抛不 skip）＋用尽时 exit 3 量化点名「重建等待 X ms（missing 计数 Y）」；红法 K1（容忍真实咬合：
+     重建等待 256ms）/K2（容忍注掉→rc=3 skip 旧形态）/K3（0ms 上限→exit 3 点名）全命中，读数在票 14-K §七。）
+  3. 下一件 `verify-input-route-heal` 注入故障后等 9s，落在冷却窗内 ⇒ 产品**按设计**不重建 ⇒
+     「HWND 没变 / heals 没增」被判成产品红。
+- **解法**：件的收场必须走**用户真入口**（第二实例 → `second-instance` → `showPet()` 重建），
+  抽成 `tools/lib-show-pet.js` 给 `verify-hide` / `verify-hide-show-input` 共用；
+  等自愈的件把等待窗按「冷却 30s + 余量」算（`verify-input-route-heal` 9s → 34s），
+  并在注释里写明这条同步义务（产品改冷却常数必须同步件）。
+- **附带**：`verify-hide` 收场修好后，`verify-input-route-heal` 从 38s 红变成 **3.8s 绿**——
+  场地干净的件本来就该秒级出结论。
+- **同族**（同一轮的读数时序坑，一起记）：判据读**稳态**不读瞬时态。
+  - `verify-input-route-heal` 的 ⑤：HWND 一变就立刻读子窗，读到的是「子窗已建、页面还没合成」
+    （可见=false）——重建是成功的，判据却红。改成轮询到可见（上限 8s）。
+  - `verify-walk-visual`：`pet:walk` 投递后固定 `sleep(400)` 读渲染状态，页面刚被重建时会读到上一
+    状态（`bodyAnim` 还是 `float`），全量轮偶发红、单跑必绿。改成轮询到目标状态（上限 1.5s）。
+  - **不放松判据的判法**：轮询上限到点仍未达目标 ⇒ 照样红。区别只在「允许渲染帧延迟」。
+
+
+### 107. 装置输出用 `| head` 截断＝EPIPE 杀装置、收尾不跑、泄漏 electron 实例占端口（票 14-K 执行事故，2026-10-24）
+
+- **症状**：跑批后下一档红法突然 exit 3「双副本自检不过（§96）：config.js 有 2 个键」，两个键分属**两个不同副本目录**；
+  查进程发现上一轮的 electron（带 `--inspect=9229`）还活着，占着调试端口。
+- **根因**：装置输出经 `node … | head -N` 消费——head 读满 N 行即关管道，装置后续 stdout 写入 EPIPE、
+  node 进程提前退出（`PIPESTATUS` 的 rc=1 被当成"正常红"），**finally 收尾（按 pid 杀实例）根本没跑到** → 自起实例泄漏。
+  泄漏信号其实出现过：下一轮 waitReady 打「**0.0s 就绪**」＝连到了遗留实例的端口（冷启动两个调试端口不可能 0.0s），
+  当时没警觉；直到跨副本跑（装置根 ≠ 遗留实例根）才被双副本自检点破。
+- **解法**：装置/判据件的长输出只许 **tail、`sed -n '/x/,$p'`（整流消费）** 或先落文件再取段（`> file 2>&1`），**禁 head 截断**。
+  泄漏后的清场＝按命令行定位主进程（`Get-CimInstance Win32_Process -Filter "Name='electron.exe'"` 里带 `--inspect` 的那条）
+  → `taskkill /PID <pid> /T /F`，禁按映像名批量杀。
+- **附带**：这次泄漏正是被装置自己的「双副本自检」（§96）拦下的——两键点名＋整轮 exit 3 拒跑，脏读数没混进任何档位。
+
+
 ## 十、复盘：一个「点不动」修了 7 轮 —— 方法上的教训
 
 这是本项目目前代价最大的一次排查（用户第 7 次反馈才彻底解决）。技术坑分别记在 #30/#36/#39/#40/#43/#44/#45，这里只记**为什么会拖这么久**，以及下次怎么避开。

@@ -1,10 +1,19 @@
-// @runtime: shared —— 默认形态连调试端口量 setPosition/定时器精度（--local 子集除外）
-// 量「走过去」的两个旋钮：单次 setPosition 的原生开销、主进程定时器实际能跑到多少 Hz。
+// @runtime: shared —— 默认形态连调试端口量「移动一帧」的开销/定时器精度（--local 子集除外）
+// 量「走过去」的两个旋钮：单次原生移窗的开销、主进程定时器实际能跑到多少 Hz。
 // 决定 WALK.frameMs 该定多少（帧率太低时窗口每步位移大，看着就是阶梯感）。
+// 票 14-I：移动调用改 **SetWindowPos(SWP_NOSIZE)**——产品 1.1.4 起走这条（main.js
+// movePetWindowTo，§98），旧版本这里量的是 Electron `setPosition`：它每次往返把窗口尺寸
+// 涨 2~3px，200+120 拍的测量直接把 605×605 撑成 1202×1120，之后整轮共享批的场地全废
+// （resizable:false 的窗口 SetWindowPos 改不小，只能 setBounds 拉回且永远差 1 DIP）。
+// 量产品真正在跑的路径，既是对的口径，也不再制造不可逆的场地损伤。
 // 用法（先起带主进程调试端口的实例）：
 //   PET_USER_DATA_DIR=<临时目录> npx electron --inspect=9229 --remote-debugging-port=9333 .
 //   node tools/measure-walk-perf.js
-// 注意：测量期间会让桌宠窗口左右抖动 1px，结束后恢复原位。
+// 注意：测量期间会让桌宠窗口左右抖动 1px，结束后恢复原位（位置-only，尺寸零改动）。
+const path = require('path');
+// CDP 表达式里 require 裸名解析不到（process.mainModule.require 的解析基点不在仓库根，
+// 实测「Cannot find module 'koffi'」）——与 §96 同族，一律用绝对路径。
+const KOFFI_ABS = JSON.stringify(path.join(__dirname, '..', 'node_modules', 'koffi'));
 function connect(port, pick) {
   return (async () => {
     const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
@@ -73,15 +82,25 @@ async function main() {
   const mainProc = await connect(9229, (ts) => ts.find((t) => t.type === 'node') || ts[0]);
   const out = await mainProc.evaluate(`
     (async () => {
-      const { BrowserWindow } = process.mainModule.require('electron');
+      const { BrowserWindow, screen } = process.mainModule.require('electron');
       const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
       if (!w) return JSON.stringify({ error: '找不到桌宠窗口' });
       const b = w.getBounds();
+      // 票 14-I：与产品 movePetWindowTo 同款——位置-only，物理坐标由所在屏的 dipToScreenPoint 算
+      const koffiW = process.mainModule.require(${KOFFI_ABS});
+      const u32 = koffiW.load('user32.dll');
+      const SetWindowPosW = u32.func('SetWindowPos', 'bool', ['uintptr', 'uintptr', 'int', 'int', 'int', 'int', 'uint32']);
+      const hwndW = w.getNativeWindowHandle().readBigUInt64LE(0);
+      const SWP_MOVE = 0x0001 | 0x0004 | 0x0010; // NOSIZE | NOZORDER | NOACTIVATE
+      const moveTo = (x, y) => {
+        const p = screen.dipToScreenPoint({ x, y });
+        SetWindowPosW(hwndW, 0, Math.round(p.x), Math.round(p.y), 0, 0, SWP_MOVE);
+      };
       const N = 200;
       const t0 = process.hrtime.bigint();
-      for (let i = 0; i < N; i++) w.setPosition(b.x + (i % 2), b.y);
+      for (let i = 0; i < N; i++) moveTo(b.x + (i % 2), b.y);
       const t1 = process.hrtime.bigint();
-      w.setPosition(b.x, b.y);
+      moveTo(b.x, b.y);
       const perCallMs = Number(t1 - t0) / 1e6 / N;
 
       const results = {};
@@ -91,7 +110,7 @@ async function main() {
         await new Promise((res) => {
           const id = setInterval(() => {
             ticks += 1;
-            w.setPosition(b.x + (ticks % 2), b.y);
+            moveTo(b.x + (ticks % 2), b.y);
             if (Date.now() - start >= 600) { clearInterval(id); res(); }
           }, want);
         });
@@ -103,7 +122,7 @@ async function main() {
       // 它会影响整机功耗，只作为备选：能提多少看 withPeriod 字段。
       let withPeriod = null;
       try {
-        const koffi = process.mainModule.require('koffi');
+        const koffi = process.mainModule.require(${KOFFI_ABS});
         const winmm = koffi.load('winmm.dll');
         const begin = winmm.func('void __stdcall timeBeginPeriod(uint32)');
         const endPeriod = winmm.func('void __stdcall timeEndPeriod(uint32)');
@@ -113,7 +132,7 @@ async function main() {
         await new Promise((res) => {
           const id = setInterval(() => {
             ticks += 1;
-            w.setPosition(b.x + (ticks % 2), b.y);
+            moveTo(b.x + (ticks % 2), b.y);
             if (Date.now() - start >= 600) { clearInterval(id); res(); }
           }, 8);
         });
@@ -123,7 +142,7 @@ async function main() {
         withPeriod = '调用失败: ' + err.message;
       }
 
-      w.setPosition(b.x, b.y);
+      moveTo(b.x, b.y);
       return JSON.stringify({ perCallMs: +perCallMs.toFixed(3), intervals: results, withPeriod8ms: withPeriod });
     })()
   `);

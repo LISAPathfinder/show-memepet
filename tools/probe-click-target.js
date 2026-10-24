@@ -5,6 +5,11 @@
 //   node tools/probe-click-target.js --click      # 顺带注入一次左键点击（真实 mouse_event，会真的点到那个窗口上）
 // 判读：WindowFromPoint 返回的不是桌宠窗口 → 说明有窗口压在它上面（点被别的窗口吃了）；
 //       是桌宠窗口但应用日志没有「桌宠收到点击」→ 问题在窗口内部（渲染端处理/输入路由）。
+// ★ 2026-10-21 补一层（用户报「挂着没动一段时间后点不动」的现场）：桌宠窗口是「外壳 + 渲染子窗口」两层，
+//   真正接鼠标的是子窗口 Chrome_RenderWidgetHostHWND。WindowFromPoint **会跳过不可见窗口**，所以：
+//     · 落点=渲染子窗口 → 正常形态（点击会进页面）；
+//     · 落点=外壳且子窗口不在/不可见 → 输入通道失联（样式位看着可交互、点击也"落在桌宠上"，却谁都收不到）。
+//   旧版把这两种都读成「问题在窗口内部」，等于把最隐蔽的那一层糊掉了。
 const fs = require('fs');
 const path = require('path');
 const koffi = require('koffi');
@@ -79,6 +84,11 @@ function petHwndFromLog() {
 const packPoint = (x, y) => (BigInt(y >>> 0) << 32n) | BigInt(x >>> 0);
 const hitAt = (x, y) => Number(WindowFromPoint(packPoint(x, y)));
 
+// Chromium 的渲染子窗口：鼠标消息真正的归宿（见文件头 2026-10-21 那条）
+const FindWindowExW = user32.func('FindWindowExW', 'uintptr', ['uintptr', 'uintptr', 'void *', 'void *']);
+const wstr = (s) => Buffer.from(s + '\0', 'utf16le');
+const renderChildOf = (h) => Number(FindWindowExW(h, 0, wstr('Chrome_RenderWidgetHostHWND'), null));
+
 // 一次性把光标移到指定坐标（与 move-cursor.js 同源，避免额外调用）
 const moveTo = (x, y) => SetCursorPos(x, y);
 if (process.argv.includes('--at')) {
@@ -103,8 +113,19 @@ const describe = (h) => {
 console.log('光标 =', `${c.x},${c.y}`);
 console.log('前台窗口 =', describe(fg));
 console.log('日志里的桌宠窗口 =', describe(pet));
+const petChild = pet ? renderChildOf(pet) : 0;
+if (pet) console.log('桌宠渲染子窗口 =', petChild ? describe(petChild) : '(不存在)');
 console.log('光标处的点击会落到 =', describe(hit));
-if (hit && pet && hit !== pet) {
+if (hit && petChild && hit === petChild) {
+  console.log('OK 落点=渲染子窗口 —— 正常形态，点击会进页面');
+} else if (hit && pet && hit === pet) {
+  if (!petChild || !IsWindowVisible(petChild)) {
+    console.log('★ 落点=桌宠外壳、渲染子窗口不在或不可见 —— Chromium 输入通道失联：');
+    console.log('   此时样式位多半仍是「可交互」、点击也"落在桌宠上"，但页面永远收不到；只有重建窗口能恢复。');
+  } else {
+    console.log('!! 落点=桌宠外壳（子窗口在且可见）—— 这一下落在渲染子窗口没覆盖到的外壳区域上');
+  }
+} else if (hit && pet && hit !== pet) {
   console.log('!! 落点不是桌宠窗口 —— 有窗口压在它上面（点击被那个窗口吃了）');
   let parent = hit;
   for (let i = 0; i < 6; i++) {
@@ -113,8 +134,6 @@ if (hit && pet && hit !== pet) {
     console.log(`   上层层级 ${i + 1}:`, describe(p));
     parent = p;
   }
-} else if (hit && hit === pet) {
-  console.log('OK 落点就是桌宠窗口 —— 若此时点击仍无反应，问题在窗口内部（不是被遮挡/穿透）');
 }
 
 if (process.argv.includes('--click')) {

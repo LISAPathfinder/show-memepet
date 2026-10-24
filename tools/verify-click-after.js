@@ -25,7 +25,10 @@ const { PreconditionError, loadRectMath, aimAt, computeAim, assertPointOnPet } =
 
 const user32 = koffi.load('user32.dll');
 const GetCursorPos = user32.func('GetCursorPos', 'bool', ['void *']);
-const SetCursorPos = user32.func('SetCursorPos', 'bool', ['int', 'int']);
+const { dipSetter, readDipScale } = require('./lib-cursor'); // 票 14-G：DIP→物理换算
+// 件里的坐标全是 DIP，这个 setter 吃 DIP、发物理像素（定义见 lib-cursor）
+let DIP_SCALE = 0;
+const SetCursorPos = dipSetter(() => DIP_SCALE);
 // POINT 是**按值**传参（x64 下打包进寄存器）：必须按 int64 传，声明成 void* 传 Buffer 会恒返回 0（踩过）
 const WindowFromPoint = user32.func('WindowFromPoint', 'uintptr', ['int64']);
 const GetWindowRect = user32.func('GetWindowRect', 'bool', ['uintptr', 'void *']);
@@ -62,6 +65,10 @@ const REPEAT_N = Number(argVal('--repeat-after-hideshow')) || 0;
 const FOCUS_VARIANT = ['show', 'focus'].includes(argVal('--focus-variant')) ? argVal('--focus-variant') : '';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// CDP evaluate 超时（票 14-I）：页面在**隐藏期**可能被 Chromium 冻结，`Runtime.evaluate`
+// 会永不返回——实测 ④ 同句柄 hide→show 之后 clickTest 的渲染端读数挂死，整件被装置 600s 强杀，
+// 故障形态从「一步测不到」放大成「整轮拖满 10 分钟」。给每个 evaluate 兜 15s，超时按「测不了」处理。
+const EVAL_TIMEOUT_MS = 15_000;
 const cursor = () => {
   const b = Buffer.alloc(8);
   GetCursorPos(b);
@@ -129,16 +136,27 @@ function connect(port) {
     const evaluate = (expression) =>
       new Promise((resolve, reject) => {
         const id = ++seq;
+        let done = false;
+        const timer = setTimeout(
+          () => finish(reject, new Error(`evaluate 超时（${EVAL_TIMEOUT_MS}ms）——页面可能被冻结或已销毁`)),
+          EVAL_TIMEOUT_MS
+        );
         const onMsg = (ev) => {
           const msg = JSON.parse(ev.data);
           if (msg.id !== id) return;
-          ws.removeEventListener('message', onMsg);
           if (msg.result && msg.result.exceptionDetails) {
-            reject(new Error(msg.result.exceptionDetails.exception?.description || 'evaluate 失败'));
+            finish(reject, new Error(msg.result.exceptionDetails.exception?.description || 'evaluate 失败'));
             return;
           }
-          resolve(msg.result.result.value);
+          finish(resolve, msg.result.result.value);
         };
+        function finish(fn, v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          ws.removeEventListener('message', onMsg);
+          fn(v);
+        }
         ws.addEventListener('message', onMsg);
         ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
       });
@@ -162,6 +180,7 @@ const newLinesSince = (n) => logLines().slice(n);
 async function main() {
   const rectMath = loadRectMath(path.join(__dirname, '..')); // main.js 矩形公式提取失败 = 前置不满足
   const mainProc = await connect(9229);
+  DIP_SCALE = await readDipScale(mainProc); // 票 14-G：值取产品自己用的那个
   // 渲染端连接（记录鼠标事件）：判据用它 —— 比「日志里有没有一行」可靠得多
   // （本轮踩过：应用日志其实记到了点击，我却用日志当判据，得出过完全相反的结论）
   // 必须是 let：showPet() 重建窗口会换渲染页，旧连接随之失效（③ 真入口步骤靠重连才测得下去）
@@ -175,16 +194,27 @@ async function main() {
     return (expression) =>
       new Promise((resolve, reject) => {
         const id = ++seq;
+        let done = false;
+        const timer = setTimeout(
+          () => finish(reject, new Error(`evaluate 超时（${EVAL_TIMEOUT_MS}ms）——页面可能被冻结或已销毁`)),
+          EVAL_TIMEOUT_MS
+        );
         const onMsg = (ev) => {
           const msg = JSON.parse(ev.data);
           if (msg.id !== id) return;
-          ws.removeEventListener('message', onMsg);
           if (msg.result && msg.result.exceptionDetails) {
-            reject(new Error(msg.result.exceptionDetails.exception?.description || 'evaluate 失败'));
+            finish(reject, new Error(msg.result.exceptionDetails.exception?.description || 'evaluate 失败'));
             return;
           }
-          resolve(msg.result.result.value);
+          finish(resolve, msg.result.result.value);
         };
+        function finish(fn, v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          ws.removeEventListener('message', onMsg);
+          fn(v);
+        }
         ws.addEventListener('message', onMsg);
         ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
       });
@@ -484,16 +514,27 @@ async function main() {
     return (expression) =>
       new Promise((resolve, reject) => {
         const id = ++seq;
+        let done = false;
+        const timer = setTimeout(
+          () => finish(reject, new Error(`evaluate 超时（${EVAL_TIMEOUT_MS}ms）——页面可能被冻结或已销毁`)),
+          EVAL_TIMEOUT_MS
+        );
         const onMsg = (ev) => {
           const msg = JSON.parse(ev.data);
           if (msg.id !== id) return;
-          ws.removeEventListener('message', onMsg);
           if (msg.result && msg.result.exceptionDetails) {
-            reject(new Error(msg.result.exceptionDetails.exception?.description || 'evaluate 失败'));
+            finish(reject, new Error(msg.result.exceptionDetails.exception?.description || 'evaluate 失败'));
             return;
           }
-          resolve(msg.result.result.value);
+          finish(resolve, msg.result.result.value);
         };
+        function finish(fn, v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          ws.removeEventListener('message', onMsg);
+          fn(v);
+        }
         ws.addEventListener('message', onMsg);
         ws.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true } }));
       });
@@ -635,10 +676,17 @@ async function main() {
   }
 
   console.log('\n④ 同句柄 hide→show（**机理探针·不计验收**，§95：产品 1.0.71 起已不走这条路径）');
-  await hideShow();
-  await sleep(2200);
-  results.sameHwndProbe = await clickTest('same-hwnd-probe');
-  console.log(`   机理读数：同句柄重显后 down=${results.sameHwndProbe ? '✓' : '✗'}（预期✗；这正是产品必须换 HWND 的理由）`);
+  // 票 14-I：④ 之后页面可能被 Chromium 冻结（隐藏期），整段按「测不了就不评」处理——
+  // 它是机理探针，把整件拖成 600s 超时会掩盖 ①②③ 的结论（实测形态）。
+  try {
+    await hideShow();
+    await sleep(2200);
+    results.sameHwndProbe = await clickTest('same-hwnd-probe');
+    console.log(`   机理读数：同句柄重显后 down=${results.sameHwndProbe ? '✓' : '✗'}（预期✗；这正是产品必须换 HWND 的理由）`);
+  } catch (e) {
+    results.sameHwndProbe = 'n/a';
+    console.log(`   ④ 测不到：${e.message}——机理探针跳过，不计验收（①②③ 不受影响；这条路径产品 1.0.71 起已不走）`);
+  }
 
   console.log('\n结论：', JSON.stringify(results));
   const ok = results.baseline && results.walk && results.realEntry && results.hwndSwapped;

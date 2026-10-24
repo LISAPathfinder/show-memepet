@@ -65,10 +65,16 @@
 // 聚合与退出码（0 全绿 / 1 断言失败或脚本异常（打「脚本异常：」）/ 3 前置不满足）：
 //   - 逐件记录 rc + stdout+stderr 的 Buffer.byteLength（不许 String.length，中文虚低近 2 倍）；
 //     零字节＝没跑，不算通过。
-//   - rc=3 重试 1 次（verify-peek 这类前置竞态件）；仍 3 记 skip 并明打原因，skip 不计入绿。
-//     skip 不参与聚合——verify-click-passthrough 的真人授权闸门（无 --i-accept-real-input 必 3）
-//     是常态存在的前置不满足，若让它把整轮拖成 3，装置就永远亮不了绿灯；代价是 skip 必须
-//     逐件点名原因，不许静默。除 skip 外取最坏值（失败→1），与 run-ci.js 契约一致。
+//   - rc=3 重试 1 次（verify-peek 这类前置竞态件）；仍 3 记 skip 并明打原因。
+//     skip 的聚合口径（票 14-K 收紧，此前「skip 一律不计入绿」）：合法 skip **白名单化**
+//     （LEGIT_SKIP_SHARED / LEGIT_SKIP_INSTALLED，逐件注明为什么算合法）——verify-click-passthrough
+//     的真人授权闸门（无 --i-accept-real-input 必 3）是常态存在的前置不满足，若让它把整轮拖成 3，
+//     装置就永远亮不了绿灯；但白名单之外的任何单件 skip 都意味着「该件没跑成」（14-J ★4b 实测：
+//     1 件绿＋6 件 skip 报 PASS 1/1 rc=0；更常见的形态是复位拍拦下的件从 PASS 分母里减掉，其余
+//     全绿照报 30/30）⇒ 名单外 skip 整轮 rc=1 并逐件打「件名＋原因分类＋原因首行」，
+//     汇总行前缀「本轮不合格：m 件没跑」。除 skip 外取最坏值（失败→1），与 run-ci.js 契约一致。
+//     ⚠ 分界（写死防手滑）：整轮级前置（占用闸门拦下、调试端口没起、双副本自检不过、所有件全
+//     skip）**仍 exit 3**，不在本规则内——本票只把「单件级 skip」计入红，别把占用闸门改成 1。
 //   - 整轮硬断言：实例日志（SHOWCASE_DATA_DIR 下）跑前取 statSync().size **字节**偏移，跑后按字节
 //     切增量再 utf8 解码（§64 子坑 2：字节基线不许配字符切片），断 `uncaughtException` 增量 == 0。
 //     断言自检行必打：已执行/未生效两种输出——注掉断言后输出必须变化（判别性，M3）。
@@ -80,10 +86,15 @@
 // 场地卫生（2026-10-08 立，消除件间状态泄漏的假红）：共享实例跨件存活，前一件留下的场地会让
 //   后面的件带着脏场起跑——2026-10-06 首轮 5 红里 4 红疑于此（残留隔离根 3 个 petPosition 停在
 //   屏外 -150,-200、2 个 pos=null；批内 verify-scale 4.7s 早夭、根日志缩放行 0 而单跑 6 行）。
-//   判据＝四读数：petPosition 在屏内且==票面默认、petScale===1、petWindow.isVisible()===true、
-//   cursorFleeEnabled===false。两层防线，只做在共享批（自起批的场地是件自己的根，无跨件泄漏）：
-//   ① 复位拍（每件开始前）：读数→有脏经 CDP 写回默认→复读；写回失败该件 exit 3 并打
-//     「场地被前一件 <件名> 污染：<实测读数>」，不许静默继续跑。
+//   判据＝五读数（票 14-I 起加窗口物理尺寸）：petPosition 在屏内且==票面默认、petScale===1、
+//   petWindow.isVisible()===true、cursorFleeEnabled===false、**窗口物理尺寸==首启基线**。
+//   第五条的由来（14-I 实测，本机 DSF 1.13）：`setPosition` 每次往返把窗口尺寸涨 2~3px
+//   （605×605 → 638×635 / 12 轮），而复位拍原先正是用它写回——**每一次修复都在恶化场地**，
+//   共享批越靠后的件越离谱，这正是「件间连锁污染」的机制。写回改 `SetWindowPos`（位置
+//   SWP_NOSIZE、尺寸脏了按基线物理值显式重设），并把这个读数纳入判据，否则同类漂移继续隐身。
+//   两层防线，只做在共享批（自起批的场地是件自己的根，无跨件泄漏）：
+//   ① 复位拍（每件开始前）：读数→有脏经 SetWindowPos + CDP 写回默认→复读；写回失败该件 exit 3
+//     并打「场地被前一件 <件名> 污染：<实测读数>」，不许静默继续跑。
 //   ② 净场断言（每件结束后，只读不修——写回是下一件复位拍的职责）：有脏在汇总「场地污染点名」
 //     节记该件名（谁留下脏场地）。
 //   「票面默认」不手抄产品常量：装置写根时 petPosition 恒为 null，首启产品自己把它落到
@@ -105,6 +116,13 @@
 //   R1 手工把隔离根的 petPosition 写成 -150,-200 再跑 → 首个共享件必须 exit 3 且点名污染源；
 //   R2 注掉复位拍 → 批量 5 红原形态必须复现（证明复位拍就是那批红的因）；
 //   R3 让某件中途抛异常退出 → 下一件复位拍必须仍把场地写回默认（否则 finally 语义没落地）。
+//   R4（票 14-I 立、票 14-J 受控开火并更正）把共享实例窗口尺寸撑到基线+20 → 下一件复位拍必须
+//      报「窗口尺寸 … ≠ 基线 …」并写回，输出「已写回默认，本件继续」。**造脏只能用 Electron
+//      `setBounds`**：桌宠窗 `resizable:false`，`SetWindowPos` 带 cx/cy 被 WM_GETMINMAXINFO 钳死
+//      （实测 ret=true 而尺寸纹丝不动，lib-window 注释同款），原先写在这儿的 `SetWindowPos` 是错的。
+//      **红法读数（14-J 实测）**：撑到物理 707×707 → 点名 + 写回 + 重启计数 0 + 件 rc=0；
+//      副本里把尺寸判据整块注掉 → 点名行消失、件带着 626×627 的脏窗口跑完全绿（脏场隐身）。
+//      写回若仍用 setPosition，复读会更大 ⇒ 走「写回后仍脏」分支 exit 3（这一条就是旧实现的形态）。
 //   声明式归类红法（2026-10-09 起，同样只动副本；跑不动的明确标注未做，不许写「应通过」）：
 //   N0 临时摘掉任意 3 件的 @runtime 行 → 装置必须 exit 1 并逐件列出（零未分类闸门生效）；
 //   N1 把某 installed 件（probe-window-style）声明改成 shared → 必须按「声明矛盾」exit 1 点名，
@@ -129,6 +147,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { assertNoBlockingInstances, findBlockingInstalledInstances } = require('./lib-occupancy');
+const { placeWindow, windowSize, childByClass } = require('./lib-window'); // 票 14-I：摆位走 SetWindowPos，别用 setPosition
 const identity = require('../identity');
 const { parseCiItems } = require('./run-ci');
 
@@ -151,6 +170,17 @@ const REAL_INPUT_TOOLS = new Set(['probe-click-target.js', 'inject-click.js', 'm
 // **不**把它偷偷改成 none 归类：它在无效 hwnd 时有真断言（铁律 3），装机的取证还得靠人工带参跑，
 // 留在 installed 面里可见才是诚实的记账。
 const MANUAL_TOOLS = new Set(['probe-layered-attr.js']);
+// 合法 skip 白名单（票 14-K 任务 2）：聚合口径从「skip 一律不计入绿」收紧为「白名单外 skip ⇒ rc=1」。
+// 名单逐件注明为什么它算合法 skip——这些都是**闸门设计如此**的常态前置不满足（不代签/无从传参），
+// 让它们把整轮拖红，装置就永远亮不了绿灯；名单之外的任何 skip 都意味着「该件没跑成」
+// （14-J ★4b：1 件绿＋6 件 skip 报 PASS 1/1 rc=0；复位拍拦下的件也从 PASS 分母里减掉），整轮必须红。
+// ⚠ 整轮级前置（占用闸门拦下、调试端口没起、双副本自检不过、所有件全 skip）**仍 exit 3**，
+// 不在本规则内——本票只把「单件级 skip」计入红，别顺手把占用闸门改成 1。
+const LEGIT_SKIP_SHARED = new Set([
+  'verify-click-passthrough.js', // 真人授权闸门：会注入真实点击，无 --i-accept-real-input 必 rc=3，不代签（既有设计）
+]);
+// 装机轮（--installed）的合法 skip＝两个人工闸门名单的并集；新增成员改 MANUAL_TOOLS/REAL_INPUT_TOOLS 即自动跟随。
+const LEGIT_SKIP_INSTALLED = new Set([...MANUAL_TOOLS, ...REAL_INPUT_TOOLS]);
 // --plan 可跑性断言开关（任务 4：plan 不许恒 0 的打印式恒绿）。N3 红法口径：置 false（注掉）后
 // plan 仍 exit 0，但输出必须出现「已禁用」行——注掉后输出不变即说明断言无牙，当场改正再报。
 const PLAN_RUNNABILITY_ASSERT = true;
@@ -336,7 +366,7 @@ function buildPlan(root) {
   // ---- ci/none 归类闸门（票 11-Y3 T3-①）----
   // none 必须逐件点名豁免：它是"谁都不属于"的桶，有断言能力的判据件躲进来就等于没人执行（§91 同族）。
   const NONE_ALLOWLIST = new Set([
-    'lib-aim.js', 'lib-container.js', 'lib-occupancy.js', // 共享库，被 require，不独立执行
+    'lib-aim.js', 'lib-container.js', 'lib-occupancy.js', 'lib-cursor.js', 'lib-window.js', 'lib-show-pet.js', // 共享库，被 require，不独立执行
     'run-ci.js', 'run-runtime-ci.js', // 两个装置自身
     'gen-emoji-catalog.js', 'mock-preload.js', 'inject-click.js', 'move-cursor.js', 'probe-mouse-event.js',
   ]);
@@ -552,12 +582,12 @@ async function runInstalledRound(root, plan, flags) {
       continue;
     }
     if (REAL_INPUT_TOOLS.has(name) && !authorized) {
-      results.push({ name, status: 'skip', rc: 3, bytes: 0, reason: '真人授权闸门：本件会注入真实点击/移动真实光标，无 --i-accept-real-input 一律 skip，不代签（verify-click-passthrough 同口径）' });
+      results.push({ name, status: 'skip', rc: 3, bytes: 0, skipClass: '真人授权闸门（白名单内）', reason: '真人授权闸门：本件会注入真实点击/移动真实光标，无 --i-accept-real-input 一律 skip，不代签（verify-click-passthrough 同口径）' });
       console.log(`⊘ [装机] ${name} — skip（真人授权闸门；取样 ${sampledAt}）`);
       continue;
     }
     if (MANUAL_TOOLS.has(name)) {
-      results.push({ name, status: 'skip', rc: 3, bytes: 0, reason: '人工参数闸门：本件需命令行传参（如 hwnd）才有意义，无参时它自己 exit 2 拒绝打绿灯——装置自动批跑无从传参，记 skip；取证请手跑 node tools/' + name + ' <hwnd>' });
+      results.push({ name, status: 'skip', rc: 3, bytes: 0, skipClass: '人工参数闸门（白名单内）', reason: '人工参数闸门：本件需命令行传参（如 hwnd）才有意义，无参时它自己 exit 2 拒绝打绿灯——装置自动批跑无从传参，记 skip；取证请手跑 node tools/' + name + ' <hwnd>' });
       console.log(`⊘ [装机] ${name} — skip（人工参数闸门，需带 hwnd 手跑；取样 ${sampledAt}）`);
       continue;
     }
@@ -570,7 +600,7 @@ async function runInstalledRound(root, plan, flags) {
     else if (r.code === 3) status = 'skip';
     else status = 'fail';
     const reason = status === 'pass' ? '' : (r.code === 0 ? '零字节＝没跑，不算通过' : why || `rc=${r.code}`);
-    results.push({ name, status, rc: r.code, bytes, reason });
+    results.push({ name, status, rc: r.code, bytes, reason, skipClass: status === 'skip' ? '件自身 exit 3' : null });
     const mark = status === 'pass' ? '✓' : status === 'skip' ? '⊘' : '✗';
     console.log(`${mark} [装机] ${name} — rc=${r.code} 字节=${bytes} ${(r.ms / 1000).toFixed(1)}s 取样=${sampledAt}${r.note ? `（${r.note}）` : ''}`);
     if (status !== 'pass') console.log(`    └ ${status === 'skip' ? 'skip 原因' : '首行'}: ${reason}`);
@@ -578,13 +608,27 @@ async function runInstalledRound(root, plan, flags) {
   const passed = results.filter((x) => x.status === 'pass');
   const failed = results.filter((x) => x.status === 'fail');
   const skipped = results.filter((x) => x.status === 'skip');
-  console.log(`装机轮 PASS ${passed.length}/${results.length - skipped.length}（绿 ${passed.length} / 失败 ${failed.length} / skip ${skipped.length}；skip 不计入绿）——现状快照读数，不与共享轮读数混比大小（§40 族）`);
+  // 票 14-K 任务 2：装机轮同型收口（此前只看 passed.length===0，1 绿＋N skip 照样 rc=0）
+  const legitSkips = skipped.filter((x) => LEGIT_SKIP_INSTALLED.has(x.name));
+  const illegitSkips = skipped.filter((x) => !LEGIT_SKIP_INSTALLED.has(x.name));
+  const unfit = illegitSkips.length ? `本轮不合格：${illegitSkips.length} 件没跑——` : '';
+  console.log(`${unfit}装机轮 PASS ${passed.length}/${results.length - skipped.length}（绿 ${passed.length} / 失败 ${failed.length} / skip：白名单内 ${legitSkips.length}／白名单外 ${illegitSkips.length}）——现状快照读数，不与共享轮读数混比大小（§40 族）`);
+  if (skipped.length) {
+    console.log('装机轮 skip 件（白名单内＝既有闸门设计如此；白名单外＝该件没跑成，整轮不计绿）：');
+    for (const x of skipped) {
+      console.log(`  ${LEGIT_SKIP_INSTALLED.has(x.name) ? '⊘(白名单内)' : '✗(白名单外)'} ${x.name} — ${x.skipClass || '（未分类）'}：${x.reason || '（无原因记录）'}`);
+    }
+  }
   if (failed.length) {
     console.log(`装机轮失败件（先修再报绿）：${failed.map((x) => `${x.name}${x.rc === null ? '(缺失)' : `(rc=${x.rc})`}`).join('、')}`);
     process.exitCode = 1;
   } else if (passed.length === 0 && skipped.length > 0) {
+    // 整轮级前置（装机版不在场等）仍 exit 3——单件级 skip 才按白名单规则转红（票 14-K 分界）
     console.error('前置不满足，不算通过：装机轮无一实际执行（全 skip）');
     process.exitCode = 3;
+  } else if (illegitSkips.length) {
+    console.error(`本轮不合格：${illegitSkips.length} 件白名单外 skip（该件没跑成，不许靠分母减掉报绿）——逐件原因见上，先修再报绿`);
+    process.exitCode = 1;
   }
 }
 
@@ -769,7 +813,7 @@ async function runMode(root, flags, only) {
   // 不过整轮 exit 3），所以此处 CDP 写与四读数落在与产品同一个 config 副本上，写后复读即为产品可见。
   // 若日后把双副本自检注掉，这里的「已写回默认」不再等于产品可见——届时对 flee/scale 这类有行为
   // 读数的开关必须改用行为回读终判（让开行/窗口尺寸），不许只信本节读数。
-  let fieldBaseline = null; // { pos:{x,y} }——首启实测默认位，不手抄产品常量
+  let fieldBaseline = null; // { pos:{x,y}, physical:{width,height} }——首启实测，不手抄产品常量
   const polluters = []; // 净场断言点名用：{ name, dirt }
   let lastSharedName = null; // 复位拍点名「前一件」用（首个共享件前为 null → 记「（根初值/轮外）」）
 
@@ -788,21 +832,36 @@ async function runMode(root, flags, only) {
       scale: c.get('petScale'),
       flee: c.get('cursorFleeEnabled'),
       visible: w.isVisible(),
-      bounds: { x: b.x, y: b.y },
+      bounds: { x: b.x, y: b.y, width: b.width, height: b.height },
       onScreen,
+      hwnd: w.getNativeWindowHandle().readBigUInt64LE(0).toString(),
     });
   })()`;
 
+  // 物理尺寸由装置侧 GetWindowRect 读（票 14-I）：基线要能「原样写回」，而 DIP 侧读数在
+  // 1.13 缩放下是往返取整后的值（首启 600 DIP 名义 → 605 实测），拿它反推物理尺寸会二次取整。
   const fieldRead = async () => {
     const raw = await cdpMainEval(PORT_MAIN, FIELD_READ_EVAL);
     const v = typeof raw === 'string' ? JSON.parse(raw) : null;
     if (!v || v.err) throw new Error(v && v.err ? `读数失败：${v.err}` : '读数返回非 JSON');
+    const ph = v.hwnd ? windowSize(v.hwnd) : null;
+    v.physical = ph && ph.width > 0 ? ph : null;
+    // 第三层读数（票 14-I）：渲染子窗在不在、可见不可见。外壳 visible/EXSTYLE 全绿而子窗被藏
+    // ＝点击全丢（§101 的坏态），而「同句柄 hide→showInactive 重显」稳定产出这个形态（§95），
+    // 件里还有这种收场方式 ⇒ 场地判据必须能看见它，否则下一件带着失联的输入通道起跑。
+    v.child = v.hwnd ? childByClass(v.hwnd, 'Chrome_RenderWidgetHostHWND') : null;
     return v;
   };
 
   const posNullish = (p) => !p || (p.x == null && p.y == null);
   const posEq = (a, b) => !!a && !!b && a.x === b.x && a.y === b.y;
   const fmtPos = (p) => (posNullish(p) ? 'null' : `${p.x},${p.y}`);
+
+  // 窗口尺寸容差（物理像素，票 14-I）：尺寸恢复只能走 Electron setBounds，它按 DIP 落定后
+  // 回读会差 1 DIP 的取整档（实测基线 683 物理 → setBounds 后 684）。容差 2 覆盖这一档；
+  // 真正的漂移是每拍 2~3px 的累积（一件 200+ 拍 → +几百 px），2px 拦得住且不会误报。
+  const SIZE_TOL = 2;
+  const sizeOff = (ph, base) => !ph || Math.abs(ph.width - base.physical.width) > SIZE_TOL || Math.abs(ph.height - base.physical.height) > SIZE_TOL;
 
   const fieldDirt = (v, base) => {
     const dirt = [];
@@ -812,20 +871,33 @@ async function runMode(root, flags, only) {
     if (Number(v.scale) !== 1) dirt.push(`petScale=${v.scale}`);
     if (v.visible !== true) dirt.push('petWindow 不可见');
     if (v.flee !== false) dirt.push(`cursorFleeEnabled=${v.flee}`);
+    // 票 14-I：窗口尺寸是「段位差」而非「状态开关」——setPosition 每拍涨 2~3px，旧复位拍
+    // 用它写回，于是脏场越修越大；不把尺寸进判据，这类漂移会一路隐身到某件的几何断言才炸。
+    if (!v.physical) dirt.push('窗口物理尺寸读不到（句柄失效）');
+    else if (sizeOff(v.physical, base))
+      dirt.push(`窗口尺寸 ${v.physical.width}×${v.physical.height} ≠ 基线 ${base.physical.width}×${base.physical.height}（容差 ±${SIZE_TOL}px；DIP 往返取整漂移，票 14-I）`);
+    // 输入通道（票 14-I）：外壳健康不等于点得动——子窗被藏就是「看着在、点不动」（§101）。
+    if (!v.child || !v.child.exists) dirt.push('渲染子窗不在（输入通道失联：点击全丢，§95/§101 坏态）');
+    else if (!v.child.visible) dirt.push('渲染子窗不可见（输入通道失联：点击全丢，§95/§101 坏态）');
     return dirt;
   };
 
-  // 现场写回：位置按基线落回 + config 置回票面默认（null）。scale 走产品自己的 pet:config 推送
-  // 通道（渲染端 onConfig 的 petScale 分支幂等应用；部分载荷安全——dblclickStats/isAdmin 分支
+  // 现场写回（票 14-I 改）：位置走原生 SetWindowPos（**位置-only 必须 SWP_NOSIZE**），
+  // 尺寸走 Electron setBounds——两条路分工是实测逼出来的，不是偏好：
+  //   · setPosition 把整窗 rect 按 DIP→物理→DIP 往返重设，1.13 下每次 +2~3px（§98/§104）；
+  //   · SetWindowPos 带 cx/cy 对 `resizable:false` 的桌宠窗**无效**（WM_GETMINMAXINFO 把
+  //     min/max track size 钳在现值：实测 ret=true、尺寸纹丝不动）；
+  //   · setBounds 能改，但按 DIP 落定后回读差 1 DIP 的取整档（683 → 684 物理），故判据带 ±2 容差。
+  // config 与可见性仍走 CDP（产品自己的状态面）。scale 走产品 pet:config 推送通道
+  // （渲染端 onConfig 的 petScale 分支幂等应用；部分载荷安全——dblclickStats/isAdmin 分支
   // 各有 typeof 守卫，不会误触）。可见性只恢复 isVisible 位；showPet 的换 HWND 重建是产品语义
   // （隐藏→显示点不动的既定解法），装置不替代——修复后 petHidden 记账漂移会出一条对账日志，
   // 那是产品对账层在如实报告装置的干预，不是缺陷。
-  const fieldRepairEval = () => `(() => {
+  const fieldConfigResetEval = () => `(() => {
     const { BrowserWindow } = process.mainModule.require('electron');
     const c = process.mainModule.require(${JSON.stringify(path.join(root, 'config.js'))});
     const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
     if (!w) return JSON.stringify({ err: 'pet-window-missing' });
-    w.setPosition(${fieldBaseline.pos.x}, ${fieldBaseline.pos.y});
     c.set('petPosition', null);
     if (Number(c.get('petScale')) !== 1) {
       c.set('petScale', 1);
@@ -835,6 +907,34 @@ async function runMode(root, flags, only) {
     if (!w.isVisible()) w.show();
     return JSON.stringify({ ok: true });
   })()`;
+
+  // 尺寸恢复（DIP 口径，基线即首启实测值）。不用绝对 600：本机 1.13 下 600 DIP 名义建窗
+  // 回读是 605（§105），写 600 会把窗口设成另一档，永远「差一点」。
+  const fieldSizeResetEval = () => `(() => {
+    const { BrowserWindow } = process.mainModule.require('electron');
+    const w = BrowserWindow.getAllWindows().find((x) => x.webContents.getURL().endsWith('pet.html'));
+    if (!w) return JSON.stringify({ err: 'pet-window-missing' });
+    w.setBounds({ x: ${fieldBaseline.pos.x}, y: ${fieldBaseline.pos.y}, width: ${fieldBaseline.dip.width}, height: ${fieldBaseline.dip.height} });
+    return JSON.stringify({ ok: true });
+  })()`;
+
+  // DIP 起点 → 物理坐标：交给产品自己的 screen.dipToScreenPoint（跨屏混合 DPI 下映射非线性，
+  // 按点所在屏算才准——与 main.js movePetWindowTo 同款），装置不自己乘 scaleFactor。
+  const fieldPlaceEval = () => `(() => {
+    const { screen } = process.mainModule.require('electron');
+    const p = screen.dipToScreenPoint({ x: ${fieldBaseline.pos.x}, y: ${fieldBaseline.pos.y} });
+    return JSON.stringify({ x: Math.round(p.x), y: Math.round(p.y) });
+  })()`;
+
+  const fieldRepair = async (v) => {
+    const phys = JSON.parse(await cdpMainEval(PORT_MAIN, fieldPlaceEval()));
+    if (!placeWindow(v.hwnd, phys.x, phys.y)) throw new Error(`SetWindowPos(${phys.x},${phys.y},SWP_NOSIZE) 返回 false`);
+    if (sizeOff(v.physical, fieldBaseline)) {
+      await cdpMainEval(PORT_MAIN, fieldSizeResetEval());
+      await sleep(250); // setBounds 落定（DIP→物理映射要走一遍）
+    }
+    await cdpMainEval(PORT_MAIN, fieldConfigResetEval());
+  };
 
   // 根初值污染的修复：此刻默认位不可知（首启 bounds 不可信——落位随 petScale 走 petSize()），
   // 只能四读数全部置回票面默认后重启实例，让产品自己的 resolvePetPosition→petDefaultPosition 重新落位。
@@ -853,6 +953,28 @@ async function runMode(root, flags, only) {
     return JSON.stringify({ ok: true });
   })()`;
 
+  // 重启共享实例（复位拍「先修后复读仍脏」的最后一档）：尺寸脏通常由 setBounds 一次修回（校验轮
+  // 实测物理 1198 级仍可，见上面的 needRelaunch 注释），真正非靠重启不可的是被藏的渲染子窗——
+  // 外壳 show() 不回来，换一个新窗口让产品按 600 DIP 重建才干净。返回重启后的读数。
+  const relaunchForField = async (why) => {
+    if (lastPid && (await psAlive(lastPid))) await killTree(lastPid);
+    await waitPortDown(PORT_MAIN);
+    if (sharedLaunches >= MAX_RELAUNCH) throw new Error(`场地修复需重启实例（${why}），但共享实例重启已达 ${MAX_RELAUNCH} 次上限`);
+    lastPid = await launchInstance(root, env, iso);
+    launchedPids.push(lastPid);
+    sharedLaunches += 1;
+    await waitReady();
+    console.log(`场地修复：实例已重启（第 ${sharedLaunches} 次）——${why}`);
+    // 端口就绪 ≠ 渲染子窗就绪（Chromium 要等页面开始合成才建 Chrome_RenderWidgetHostHWND）。
+    // 不等它就会把「刚重启」误判成「子窗不在」→ 连环重启撞上限。
+    for (let i = 0; i < 25; i++) {
+      const v = await fieldRead();
+      if (v.child && v.child.visible) return v;
+      await sleep(200);
+    }
+    return fieldRead();
+  };
+
   // 基线采集（首个共享件的复位拍里走一次）：读数验根 → 可信则 bounds 即默认位。
   // 返回 null=根干净；数组=根被外部改写的读数清单（调用方据此给首件记 exit 3）。
   const establishBaseline = async () => {
@@ -865,20 +987,19 @@ async function runMode(root, flags, only) {
     if (bootDirt.length) {
       console.error(`✗ 场地基线不可信——根初值被外部改写：${bootDirt.join('；')}`);
       await cdpMainEval(PORT_MAIN, FIELD_BOOT_REPAIR_EVAL);
-      if (lastPid && (await psAlive(lastPid))) await killTree(lastPid);
-      await waitPortDown(PORT_MAIN);
-      if (sharedLaunches >= MAX_RELAUNCH) throw new Error(`场地修复需重启实例，但共享实例重启已达 ${MAX_RELAUNCH} 次上限`);
-      lastPid = await launchInstance(root, env, iso);
-      launchedPids.push(lastPid);
-      sharedLaunches += 1;
-      await waitReady();
-      console.log(`场地修复：实例已重启（第 ${sharedLaunches} 次），由产品重新落默认位`);
-      v = await fieldRead();
+      v = await relaunchForField('根初值被外部改写，产品需重新落默认位');
       if (!posNullish(v.pos)) throw new Error(`重启后 config petPosition 仍非 null（${fmtPos(v.pos)}）——基线无法建立`);
     }
     if (!v.onScreen) console.error(`⚠ 基线位置本身出屏（${v.bounds.x},${v.bounds.y}；显示器拓扑异常？）——仍按实测值作基线继续`);
-    fieldBaseline = { pos: { x: v.bounds.x, y: v.bounds.y } };
-    console.log(`场地基线：默认位 ${fieldBaseline.pos.x},${fieldBaseline.pos.y}（首启实测；产品改默认落位公式装置自动跟随）`);
+    // 尺寸基线取首启实测的 DIP + 物理两份（票 14-I）：DIP 用于 setBounds 恢复，物理用于判脏。
+    // 都不许手抄 600 —— 1.13 下 600 DIP 名义建窗回读是 605（§105），写 600 会把窗口设成另一档。
+    if (!v.physical) throw new Error('基线采集失败：窗口物理尺寸读不到（句柄失效）');
+    fieldBaseline = {
+      pos: { x: v.bounds.x, y: v.bounds.y },
+      dip: { width: v.bounds.width, height: v.bounds.height },
+      physical: v.physical,
+    };
+    console.log(`场地基线：默认位 ${fieldBaseline.pos.x},${fieldBaseline.pos.y}，窗口 ${fieldBaseline.dip.width}×${fieldBaseline.dip.height} DIP（物理 ${fieldBaseline.physical.width}×${fieldBaseline.physical.height}）（首启实测；产品改落位公式/窗口尺寸装置自动跟随）`);
     return bootDirt.length ? bootDirt : null;
   };
 
@@ -890,6 +1011,7 @@ async function runMode(root, flags, only) {
         return {
           exit3: true,
           noRetry: true, // 根改写是确定性状态：修好后重试只会让「前置不可证」的首件混成绿
+          kind: '场地污染',
           reason: `场地被前一件 ${lastSharedName || '（根初值/轮外）'} 污染：${tamper.join('；')}——基线已重建，本件不跑（前置不可证）`,
         };
       }
@@ -899,21 +1021,86 @@ async function runMode(root, flags, only) {
     try {
       v = await fieldRead();
     } catch (e) {
-      return { exit3: true, reason: `场地读数不可得（${e.message}）——实例状态未知，不许静默继续跑` };
+      return { exit3: true, kind: '读数不可得', reason: `场地读数不可得（${e.message}）——实例状态未知，不许静默继续跑` };
     }
     const dirt = fieldDirt(v, fieldBaseline);
     if (!dirt.length) return null;
     try {
-      await cdpMainEval(PORT_MAIN, fieldRepairEval());
-      await sleep(400); // 等 setPosition 落稳（verify-scale placeAt 同款 300ms 档）
+      await fieldRepair(v);
+      await sleep(400); // 等 SetWindowPos/setBounds 落稳（verify-scale placeAt 同款 300ms 档）
     } catch (e) {
       console.error(`⚠ 场地写回动作失败（${e.message}），以复读定夺`);
     }
-    const v2 = await fieldRead(); // 复读再抛＝CDP 不可用，交上层 catch 记 exit 3
-    const dirt2 = fieldDirt(v2, fieldBaseline);
     const who = lastSharedName || '（根初值/轮外）';
+    // ---- 复读 + 重建容忍（票 14-K 任务 1）----
+    // 产品自愈（checkPetInputRoute）＝「销毁旧窗 → 建新窗」，中间有一瞬
+    // getAllWindows().find(url.endsWith('pet.html')) 返回空——fieldRead 会抛
+    // 「读数失败：pet-window-missing」（14-J 校验轮实测：自 showInactive 起 +1.1s 子窗仍不可见、
+    // +1.2s 读数就抛，正处在重建的瞬间）。旧代码对这种抛直接交上层 catch 记 exit 3＝该件变
+    // skip、场地也没修，且轮询把踩雷机会从 1 次放大到 N 次。现在：
+    //   · 恢复窗 12×250ms = 3.0s：自愈带宽两方独立实测 0.8s（14-J 执行方细分）~1.2s（14-J 校验轮），
+    //     3.0s 覆盖上界并留 ≥1.8s 余量（旧 8×200ms=1.6s 余量只剩 ≤0.5s，一次慢拍就掉出去）；
+    //   · 「窗口暂时不存在」（pet-window-missing／主进程 inspector 目标暂时取不到）当**仍在重建**：
+    //     捕获、missing 计数 +1、继续下一拍——不抛、不记 skip；
+    //   · 3s 用尽仍未回来 ⇒ 保持「该件 exit 3」的既有语义，但点名要量化：
+    //     「重建后窗口 3s 未回来，重建等待 X ms（missing 计数 Y）」，不许静默继续跑；
+    //   · 其他读数失败（实例真死了等）不属重建，维持「交上层 catch 记 exit 3」的既有语义。
+    //   ⚠ 首读（本函数开头的 fieldRead）**不在**容忍范围：它有「场地读数不可得」自己的语义与
+    //   一次重试，本票只改 fieldRepair 之后的恢复窗（票面任务 1 的对象就是这一段）。
+    const REBUILD_POLL_MS = 250;
+    const REBUILD_POLL_TIMES = 12; // 12×250ms = 3.0s 恢复窗（余量理由见上）
+    let v2 = null; // 最近一次成功读数
+    let missingCount = 0; // 重建窗口期内「窗口暂时不存在」的拍数
+    let lastMissing = false; // 最后一拍是否缺失——用尽时区分「窗口没回来」与「子窗仍不可见」
+    const rebuildT0 = Date.now();
+    for (let i = 0; i <= REBUILD_POLL_TIMES; i++) {
+      if (i > 0) await sleep(REBUILD_POLL_MS);
+      let v;
+      try {
+        v = await fieldRead();
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        if (!/pet-window-missing|inspector 目标/.test(msg)) throw e; // 非重建类失败：交上层 catch（既有语义）
+        missingCount += 1;
+        lastMissing = true;
+        continue; // 仍在重建：容忍，等下一拍
+      }
+      lastMissing = false;
+      v2 = v;
+      if (v.child && v.child.visible) break; // 恢复完成（子窗可见）
+    }
+    if (!v2 || lastMissing) {
+      // 窗口用尽仍未回来：保持 exit 3 语义并量化点名——不许静默继续跑（票 14-K 任务 1.3）
+      return {
+        exit3: true,
+        kind: '读数不可得',
+        reason: `场地被前一件 ${who} 污染：${dirt.join('；')}——重建后窗口 ${REBUILD_POLL_TIMES * REBUILD_POLL_MS}ms 未回来，重建等待 ${Date.now() - rebuildT0}ms（missing 计数 ${missingCount}）——不许静默继续跑`,
+      };
+    }
+    if (missingCount > 0) {
+      console.log(`    （复位拍：重建等待 ${Date.now() - rebuildT0}ms（missing 计数 ${missingCount}）——产品自愈重建期间的窗口缺失已容忍，票 14-K）`);
+    }
+    let dirt2 = fieldDirt(v2, fieldBaseline);
+    // 两类脏走「先修后复读，仍脏才换实例」：
+    //   · 尺寸：setBounds 按 DIP 落定有 ±1 取整档，故判据带 ±2 容差。**校验轮实测**：撑到物理
+    //     1198×1130 后 `setBounds(首启锚)` **一次**回 606×606 DIP（物理 684×684，差 1＝容差内）
+    //     ⇒ 尺寸脏通常**可修复**、不该走到重启；旧注释写的「撑到 1200 级就再也设不回」是反的。
+    //     （改不小才是真的：resizable:false 下 `SetWindowPos` 带 cx/cy 被 WM_GETMINMAXINFO 钳死。）
+    //   · 输入通道：同句柄 hide→showInactive 的坏态，外壳 show() 自己不回来（§95：之后点击全丢）。
+    //     产品 `checkPetInputRoute`（600ms 节拍、连续两拍判定）会重建救回。**票 14-J 受控实测**：
+    //     showInactive 后 +0.1s 子窗 visible=false，**+0.8s 父窗口与渲染子窗句柄已双双更换且子窗可见**
+    //     ⇒ 上面这段恢复窗（票 14-K 起为 12×250ms=3.0s 并容忍重建窗口期的读数缺失）**足够等到自愈**
+    //     （14-J ×2 次实测均走「已写回默认，本件继续」、重启计数 0）。原先这里写的「子窗脏实际都会
+    //     落进重启这档」是**按 3s 上界做的推断，实测偏保守**。
+    //     重启仍是兜底：产品自愈有冷却（PET_ROUTE_HEAL_COOLDOWN_MS），冷却期内或自愈没发生时由它接住。
+    const needRelaunch = (d) => d.startsWith('窗口尺寸') || d.startsWith('窗口物理尺寸读不到') || d.includes('渲染子窗');
+    if (dirt2.length && dirt2.every(needRelaunch)) {
+      console.log(`    （复位拍：场地被前一件 ${who} 污染：${dirt.join('；')}——该类不可逆，重启实例重建窗口）`);
+      v2 = await relaunchForField(`场地不可逆：${dirt2.join('；')}`);
+      dirt2 = fieldDirt(v2, fieldBaseline);
+    }
     if (dirt2.length) {
-      return { exit3: true, reason: `场地被前一件 ${who} 污染：${dirt.join('；')}——写回后仍脏（${dirt2.join('；')}），不许静默继续跑` };
+      return { exit3: true, kind: '场地污染', reason: `场地被前一件 ${who} 污染：${dirt.join('；')}——写回后仍脏（${dirt2.join('；')}），不许静默继续跑` };
     }
     console.log(`    （复位拍：场地被前一件 ${who} 污染：${dirt.join('；')}——已写回默认，本件继续）`);
     return null;
@@ -944,8 +1131,11 @@ async function runMode(root, flags, only) {
       const flee = FLEE_TRUE.has(name);
       let attempt = { code: 1, out: Buffer.alloc(0), err: Buffer.alloc(0), note: '', ms: 0 };
       let noRetry = false; // 复位拍判「根初值污染」这类确定性前置时置位：不许靠重试混成绿
+      let snappedOut = false; // 末轮被复位拍拦下（未起跑）——skip 原因分类用（票 14-K 任务 2）
+      let snapKind = null; // 复位拍拦下时的原因分类（snap.kind：场地污染/读数不可得）
       for (let round = 1; round <= 2; round++) {
-        let snappedOut = false; // 本轮被复位拍拦下（未起跑）：跳过 flee 翻面与件执行
+        snappedOut = false;
+        snapKind = null;
         try {
           if (phase === '共享') {
             await ensureInstance();
@@ -954,6 +1144,7 @@ async function runMode(root, flags, only) {
               attempt = { code: 3, out: Buffer.alloc(0), err: Buffer.from(snap.reason), note: '', ms: 0 };
               if (snap.noRetry) noRetry = true;
               snappedOut = true;
+              snapKind = snap.kind || '场地污染';
             }
           }
           if (!snappedOut) {
@@ -981,7 +1172,17 @@ async function runMode(root, flags, only) {
       else if (attempt.code === 3) status = 'skip';
       else status = 'fail';
       const reason = status === 'pass' ? '' : (attempt.code === 0 ? '零字节＝没跑，不算通过' : why || `rc=${attempt.code}`);
-      results.push({ name, phase, status, rc: attempt.code, bytes, reason });
+      let skipClass = null;
+      if (status === 'skip') {
+        // 原因分类（票 14-K 任务 2）：复位拍拦下＝snap.kind（场地污染/读数不可得）；件没跑到就被
+        // 装置层抛错拦下（重启上限/端口未就绪等，ms=0）＝实例级前置；件自己跑过且自报 3＝件自身 exit 3。
+        // （「超时」与「件缺失」按既有语义落 fail 不落 skip：runOneTool 超时 rc=1＝断言面失败、
+        // 件缺失按失败件报告（M4）——所以这两个类别不会出现在 skip 名单里。）
+        if (snappedOut) skipClass = snapKind;
+        else if (attempt.ms === 0) skipClass = '实例级前置（装置层抛错：重启上限/端口未就绪等）';
+        else skipClass = '件自身 exit 3';
+      }
+      results.push({ name, phase, status, rc: attempt.code, bytes, reason, skipClass });
       const mark = status === 'pass' ? '✓' : status === 'skip' ? '⊘' : '✗';
       console.log(`${mark} ${idx} [${phase}] ${name} — rc=${attempt.code} 字节=${bytes} ${(attempt.ms / 1000).toFixed(1)}s${attempt.note ? `（${attempt.note}）` : ''}`);
       if (status !== 'pass') console.log(`    └ ${status === 'skip' ? 'skip 原因' : '首行'}: ${reason}`);
@@ -1032,13 +1233,22 @@ async function runMode(root, flags, only) {
     }
   }
 
-  // ---- 聚合 ----
+  // ---- 聚合（票 14-K 任务 2 收紧：skip 白名单化，名单外不计绿、整轮转红）----
   const passed = results.filter((r) => r.status === 'pass');
   const failed = results.filter((r) => r.status === 'fail');
   const skipped = results.filter((r) => r.status === 'skip');
-  console.log(`\nPASS ${passed.length}/${results.length - skipped.length}（绿 ${passed.length} / 失败 ${failed.length} / skip ${skipped.length}；skip 不计入绿，逐件原因见上）`);
+  const legitSkips = skipped.filter((r) => LEGIT_SKIP_SHARED.has(r.name));
+  const illegitSkips = skipped.filter((r) => !LEGIT_SKIP_SHARED.has(r.name));
+  const unfit = illegitSkips.length ? `本轮不合格：${illegitSkips.length} 件没跑——` : '';
+  console.log(`\n${unfit}PASS ${passed.length}/${results.length - skipped.length}（绿 ${passed.length} / 失败 ${failed.length} / skip：白名单内 ${legitSkips.length}／白名单外 ${illegitSkips.length}）`);
   if (failed.length) console.log(`失败件（先修再报绿）：${failed.map((r) => `${r.name}${r.rc === null ? '(缺失)' : `(rc=${r.rc})`}`).join('、')}`);
-  if (skipped.length) console.log(`skip 件（前置不满足，不算绿也不算红）：${skipped.map((r) => r.name).join('、')}`);
+  if (skipped.length) {
+    // 逐件打「件名＋原因分类＋原因首行」——分清「闸门设计如此」与「该件没跑成」（票 14-K 任务 2）
+    console.log('skip 件（白名单内＝既有闸门设计如此；白名单外＝该件没跑成，整轮不计绿）：');
+    for (const r of skipped) {
+      console.log(`  ${LEGIT_SKIP_SHARED.has(r.name) ? '⊘(白名单内)' : '✗(白名单外)'} ${r.name} — ${r.skipClass || '（未分类）'}：${r.reason || '（无原因记录）'}`);
+    }
+  }
 
   // 场地污染点名（净场断言的汇总面）：谁留下脏场地，读数全打，不许静默
   if (polluters.length) {
@@ -1073,8 +1283,13 @@ async function runMode(root, flags, only) {
   const executed = passed.length + failed.length - missingFails.length;
   if (failed.length) process.exitCode = 1;
   else if (executed === 0 && skipped.length > 0) {
+    // 整轮级前置（占用闸门拦下、调试端口没起、双副本自检不过、所有件全 skip）仍 exit 3——
+    // 本票只把「单件级 skip」计入红，这条分界不许改（票 14-K）
     console.error('前置不满足，不算通过：所有件都 skip、无一实际执行——先清场地（装机版退出/端口释放）再重跑');
     process.exitCode = 3;
+  } else if (illegitSkips.length) {
+    console.error(`本轮不合格：${illegitSkips.length} 件白名单外 skip（该件没跑成，不许靠分母减掉报绿）——逐件原因与分类见上，先修再报绿`);
+    process.exitCode = 1;
   }
 }
 

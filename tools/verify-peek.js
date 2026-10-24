@@ -42,7 +42,10 @@ const { LOG_CANDIDATES } = require('../identity');
 require('./lib-occupancy').assertNoBlockingInstances('verify-peek.js');
 
 const user32 = koffi.load('user32.dll');
-const SetCursorPos = user32.func('SetCursorPos', 'bool', ['int', 'int']);
+const { dipSetter, readDipScale } = require('./lib-cursor'); // 票 14-G：DIP→物理换算
+// 件里的坐标全是 DIP，这个 setter 吃 DIP、发物理像素（定义见 lib-cursor）
+let DIP_SCALE = 0;
+const SetCursorPos = dipSetter(() => DIP_SCALE);
 const GetWindowLongPtrW = user32.func('GetWindowLongPtrW', 'int64', ['uintptr', 'int']);
 const GetWindow = user32.func('GetWindow', 'uintptr', ['uintptr', 'uint']);
 const GetClassNameW = user32.func('GetClassNameW', 'int', ['uintptr', 'void *', 'int']);
@@ -127,6 +130,7 @@ function connect(port, pick) {
 (async () => {
   console.log('[regress] 右键让路穿透：前置① + A~F 计入退出码，前置不满足 exit 3');
   const mainProc = await connect(9229, (ts) => ts.find((t) => t.type === 'node') || ts[0]);
+  DIP_SCALE = await readDipScale(mainProc); // 票 14-G：值取产品自己用的那个
   const renderer = await connect(9333, (ts) => ts.find((t) => (t.url || '').endsWith('pet.html')));
 
   const petBounds = async () =>

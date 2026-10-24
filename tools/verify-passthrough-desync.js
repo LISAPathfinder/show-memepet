@@ -49,7 +49,10 @@ const { LOG_CANDIDATES } = require('../identity');
 require('./lib-occupancy').assertNoBlockingInstances('verify-passthrough-desync.js');
 
 const user32 = koffi.load('user32.dll');
-const SetCursorPos = user32.func('SetCursorPos', 'bool', ['int', 'int']);
+const { dipSetter, readDipScale } = require('./lib-cursor'); // 票 14-G：DIP→物理换算
+// 件里的坐标全是 DIP，这个 setter 吃 DIP、发物理像素（定义见 lib-cursor）
+let DIP_SCALE = 0;
+const SetCursorPos = dipSetter(() => DIP_SCALE);
 const GetWindowLongPtrW = user32.func('GetWindowLongPtrW', 'int64', ['uintptr', 'int']);
 const WS_EX_TRANSPARENT = 0x20;
 // 回落日志路径（主进程读不到自己数据目录时才用）：按候选序取第一个存在的日志文件（票 11-A 双认）
@@ -119,6 +122,7 @@ function connect(port, pick) {
 (async () => {
   console.log('[regress] 单写入者回归：A/B/C/D 计入退出码，前置不满足 exit 3');
   const mainProc = await connect(9229, (ts) => ts.find((t) => t.type === 'node') || ts[0]);
+  DIP_SCALE = await readDipScale(mainProc); // 票 14-G：值取产品自己用的那个
   const renderer = await connect(9333, (ts) => ts.find((t) => (t.url || '').endsWith('pet.html')));
 
   const petBounds = async () =>
