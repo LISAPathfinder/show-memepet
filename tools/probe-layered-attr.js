@@ -5,8 +5,10 @@
 //       （ret、crKey、bAlpha、flags，标注 LWA_COLORKEY、LWA_ALPHA；ret=false 时出参保持
 //       哨兵原样 = 「零写入」）。ret/key/alpha/flags 的组合含义见 main.js 的
 //       layeredVisuallyTransparent 注释（判据来源 PITFALLS §61 子坑 4 的 ★3/★4）。
-// 退出码：0 = 全部窗口读数完成；1 = 含无效 hwnd（读数失败）；2 = 未传参数——
+// 退出码：0 = 全部窗口读数完成；1 = 含无效 hwnd（读数失败）；3 = 前置不满足（未传 hwnd）——
 //       作为回归件被别的脚本调用时「忘传参数」必须不算成功，且与读数失败区分开。
+//       （票 14-N 起「未传参数」由 2 收敛归判定面 3：按语义它是前置缺失，装置面 2 只留给
+//       铁律 3 点名的五件，本件不再使用 2。）
 // 纯 node + koffi，不引入 Electron 依赖（铁律 5）。
 // 声明口径照 findings 第六节实测件：声明式原型必须整串传（把返回类型当第二个实参会报
 // Unexpected character '(' in type specifier）；out 参 Buffer 预填哨兵，才能区分
@@ -32,8 +34,8 @@ const SENTINEL_FLAGS = 0xffffffff;
 
 const args = process.argv.slice(2);
 if (!args.length) {
-  console.error('用法: node tools/probe-layered-attr.js <hwnd> [hwnd2 ...]   （如 0x40848，十进制亦可）');
-  process.exit(2);
+  console.error('前置不满足（未传 hwnd）——该起的命令：node tools/probe-layered-attr.js <hwnd> [hwnd2 ...]   （如 0x40848，十进制亦可）');
+  process.exit(3);
 }
 
 let bad = false;

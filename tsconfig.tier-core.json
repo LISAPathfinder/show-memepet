@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.checkjs.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true
+  },
+  "include": ["core/**/*.js", "identity.js", "types/**/*.d.ts"]
+}

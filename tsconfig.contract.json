@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "target": "es2022",
+    "lib": ["es2022", "dom"],
+    "types": []
+  },
+  "include": ["types/contract-*.d.ts"]
+}

@@ -65,10 +65,15 @@
 // 聚合与退出码（0 全绿 / 1 断言失败或脚本异常（打「脚本异常：」）/ 3 前置不满足）：
 //   - 逐件记录 rc + stdout+stderr 的 Buffer.byteLength（不许 String.length，中文虚低近 2 倍）；
 //     零字节＝没跑，不算通过。
+//   - 失败件 stdout+stderr 全量落留场根 failed/<件名>.log，汇总「失败件」行同步打该文件**绝对路径**
+//     （票 14-M 任务 1：批跑此前只打首行，风暴件的判据原文被 node 警告顶丢、归因做不完）。
+//     「首行」机制保留为兜底读数面（无留场根/落盘失败时仍有读数），不再是唯一读数面。
 //   - rc=3 重试 1 次（verify-peek 这类前置竞态件）；仍 3 记 skip 并明打原因。
 //     skip 的聚合口径（票 14-K 收紧，此前「skip 一律不计入绿」）：合法 skip **白名单化**
 //     （LEGIT_SKIP_SHARED / LEGIT_SKIP_INSTALLED，逐件注明为什么算合法）——verify-click-passthrough
-//     的真人授权闸门（无 --i-accept-real-input 必 3）是常态存在的前置不满足，若让它把整轮拖成 3，
+//     的真人授权闸门（无 --i-accept-real-input 必 3）与 instrument-pet-mouse 的人工参数闸门
+//     （票 14-N：共享批预防性 skip，先于 ensureInstance/复位拍）都是常态存在的前置不满足，
+//     若让它们把整轮拖成 3，
 //     装置就永远亮不了绿灯；但白名单之外的任何单件 skip 都意味着「该件没跑成」（14-J ★4b 实测：
 //     1 件绿＋6 件 skip 报 PASS 1/1 rc=0；更常见的形态是复位拍拦下的件从 PASS 分母里减掉，其余
 //     全绿照报 30/30）⇒ 名单外 skip 整轮 rc=1 并逐件打「件名＋原因分类＋原因首行」，
@@ -164,7 +169,8 @@ const RUNTIME_REASON_RE = /(?:^|\n)[ \t]*\/\/[ \t]*@runtime:[ \t]*([^\n]*)/;
 // inject-click / move-cursor 本身是 none 类不进执行面，登记在此是防御：谁日后把它们改挂进装机轮，闸门先拦。
 const REAL_INPUT_TOOLS = new Set(['probe-click-target.js', 'inject-click.js', 'move-cursor.js']);
 // 人工参数闸门（票 0a-3 之后补，2026-10-12 装机轮首次全量跑到才撞出来）：这类件**必须命令行传参**
-// 才有意义（如 probe-layered-attr.js 要 hwnd），无参时它自己按票 7 的设计 exit 2 拒绝打绿灯——
+// 才有意义（如 probe-layered-attr.js 要 hwnd），无参时它自己 exit 3（前置不满足，票 14-N 收敛口径；
+// 出生时按票 7 落的是 2，与判定面「前置不满足」语义不符已归位）拒绝打绿灯——
 // 于是被装置自动批跑时**每轮必红**，而红的是"装置不该自动跑它"，不是产品坏。
 // 处置＝记 skip 并点名原因（同 REAL_INPUT_TOOLS 的形状：不计绿也不计红，读数留痕），
 // **不**把它偷偷改成 none 归类：它在无效 hwnd 时有真断言（铁律 3），装机的取证还得靠人工带参跑，
@@ -176,8 +182,18 @@ const MANUAL_TOOLS = new Set(['probe-layered-attr.js']);
 // （14-J ★4b：1 件绿＋6 件 skip 报 PASS 1/1 rc=0；复位拍拦下的件也从 PASS 分母里减掉），整轮必须红。
 // ⚠ 整轮级前置（占用闸门拦下、调试端口没起、双副本自检不过、所有件全 skip）**仍 exit 3**，
 // 不在本规则内——本票只把「单件级 skip」计入红，别顺手把占用闸门改成 1。
+// 共享轮「人工参数闸门」名单（票 14-N）：这类件要**人工操作/带参**才有读数，装置自动批跑无从满足
+// ⇒ 共享批跑前**预防性 skip**（先于 ensureInstance/复位拍，不碰共享实例），不计绿也不计红。
+// 单一真源约束：预防性 skip 的判断与 LEGIT_SKIP_SHARED 共用这一份（后者由它展开）——谁日后往共享
+// 批里加闸门件，只改这里一处；若实现漂移成两份名单且只改了一处，14-K 聚合闸当场红（红法 G7 的牙）。
+const MANUAL_GATE_SHARED = new Set([
+  // 批跑默认 dump 且无人装记录器 ⇒ 输出恒「"未安装记录器"」21 字节 rc=0＝零读数面的假绿
+  // （票 14-M 待查读数已核：件本来就短、非半途静默）；取证必须人工 install→真实操作→dump。
+  'instrument-pet-mouse.js',
+]);
 const LEGIT_SKIP_SHARED = new Set([
   'verify-click-passthrough.js', // 真人授权闸门：会注入真实点击，无 --i-accept-real-input 必 rc=3，不代签（既有设计）
+  ...MANUAL_GATE_SHARED, // 人工参数闸门（票 14-N）：自动批跑无从满足的人工前置，预防性 skip——单一真源在上面的名单
 ]);
 // 装机轮（--installed）的合法 skip＝两个人工闸门名单的并集；新增成员改 MANUAL_TOOLS/REAL_INPUT_TOOLS 即自动跟随。
 const LEGIT_SKIP_INSTALLED = new Set([...MANUAL_TOOLS, ...REAL_INPUT_TOOLS]);
@@ -267,9 +283,16 @@ function runCapture(cmd, args, { env, cwd, timeoutMs = 30_000 } = {}) {
   });
 }
 
+// 「首行」＝第一条**真实内容**行（票 14-R 任务 2b）：此前不辨噪音，ESM 件（现 9 件、全在 shared
+// 执行面）的 stderr 首行固定是 node 的 MODULE_TYPELESS_PACKAGE_JSON 警告块——14-M 立票时风暴件
+// 的判据原文就是被它顶掉的。跳行过滤只写在这一处定义里（三处调用 :launchInstance 诊断/:615 装机轮/
+// :1221 批跑 同治），**禁止在调用点各写一份**。只认 node 自身警告块的固定句式（本机 node v24 实测
+// 四行：首行 + Reparsing… + To eliminate… + (Use `node --trace-warnings …`)）＋ ExperimentalWarning；
+// 其余一律当真实内容。全件输出只剩噪音 ⇒ 返回空 ⇒ 走既有的「零输出」分支，不伪造首行。
+const STDERR_NOISE_RE = /^(?:\(node:\d+\) \[MODULE_TYPELESS_PACKAGE_JSON\] Warning:|\(node:\d+\) ExperimentalWarning:|Reparsing as ES module because module syntax was detected\.|To eliminate this warning, add "type": "module" to |\x28Use `node --trace-warnings )/;
 const firstLine = (buf) => {
   if (!buf || !buf.length) return '';
-  const line = buf.toString('utf8').split(/\r?\n/).find((l) => l.trim());
+  const line = buf.toString('utf8').split(/\r?\n/).find((l) => l.trim() && !STDERR_NOISE_RE.test(l.trim()));
   return line ? line.trim().slice(0, 180) : '';
 };
 
@@ -304,13 +327,44 @@ function declaredReason(src) {
 }
 
 // ---------- 清单推导 ----------
+// 全集枚举单一真源（票 14-R 任务 2a）：`*.js` 这份谓词此前在 buildPlan 与 --ledger 各写一份，
+// 一旦有人把执行面件改成 .mjs（比如为消 node 的 MODULE_TYPELESS 警告），它们会**同时**离开全集
+// 与执行面，而唯一的自证「八类计数求和 == 全集」两边同步变少、照样成立 ⇒ 零红（§91 的批量形态，
+// 且落在穿透链与恢复链的 shared 守卫上）。本 helper 是唯一枚举点，返回两份清单：
+//   js         = 装置编队的全集（.js，排序稳定）；
+//   suspicious = 非 .js 却带 @runtime 声明的文件——哨兵对象。判据是「件头有没有 @runtime: 声明」，
+//                不是扩展名白名单：纯夹具/文档（README、lib 说明等）不带声明，不在哨兵范围（W6 边界）。
+function listToolEntries(toolsDir) {
+  const entries = fs.readdirSync(toolsDir).sort();
+  const js = entries.filter((f) => f.endsWith('.js'));
+  const suspicious = [];
+  for (const f of entries) {
+    if (f.endsWith('.js')) continue;
+    let s = null;
+    try { s = fs.readFileSync(path.join(toolsDir, f), 'utf8'); } catch { s = null; }
+    if (s !== null && declaredClass(s) !== null) suspicious.push(f);
+  }
+  return { js, suspicious };
+}
+
+// 静默漏过哨兵（票 14-R 任务 2a）：非 .js 的 @runtime 件会被 `*.js` 全集枚举静默漏过——
+// 装置在编队起手 exit 1 逐件点名，让这类改名**必红**。不替改名铺路：不许把件改 .mjs，
+// 也不许让 glob 认 .mjs；真要豁免必须改本装置显式登记（同 NONE_ALLOWLIST 的"逼出 review"形态）。
+function assertNoSilentDrop(suspicious) {
+  if (!suspicious.length) return;
+  console.error(`✗ 静默漏过哨兵（票 14-R）：tools/ 下 ${suspicious.length} 个非 .js 文件带 @runtime 声明，会被 *.js 全集枚举静默漏过（执行面与八类求和自证两边同时变少、不会红）：`);
+  for (const f of suspicious) console.error(`   ${f} — 它会被 *.js 枚举静默漏过——要么改回 .js，要么显式登记豁免并说明理由`);
+  process.exit(1);
+}
+
 function buildPlan(root) {
   const toolsDir = path.join(root, 'tools');
   const ciPath = path.join(root, '.github', 'workflows', 'ci.yml');
   if (!fs.existsSync(ciPath)) fail(`仓库根里没有 ${path.join('.github', 'workflows', 'ci.yml')}：${root}`);
   if (!fs.existsSync(toolsDir)) fail(`仓库根里没有 tools/：${root}`);
 
-  const all = fs.readdirSync(toolsDir).filter((f) => f.endsWith('.js')).sort();
+  const { js: all, suspicious } = listToolEntries(toolsDir);
+  assertNoSilentDrop(suspicious);
   const forced = parseCiItems(fs.readFileSync(ciPath, 'utf8')).map((p) => path.basename(p));
   const srcOf = (name) => { try { return fs.readFileSync(path.join(toolsDir, name), 'utf8'); } catch { return null; } };
 
@@ -573,6 +627,9 @@ async function runInstalledRound(root, plan, flags) {
   console.log(`装机版在场 ${blockers.length} 进程（pid：${blockers.map((b) => b.pid).join('、')}）；读数＝现状快照（§40 族），每件带取样时刻，不与共享轮（dev 隔离实例）读数混比大小`);
   const authorized = flags.has('--i-accept-real-input');
   const results = [];
+  // 票 14-M 附注：装机轮也落失败件原文。装机轮不建隔离数据根（对象＝在跑的装机产物），所以根**懒建**——
+  // 只有第一条真失败才 mkdtemp，零失败轮连目录都不产生（M2i 反向对照按构造成立，不靠"记得删"）。
+  let dumpRoot = null;
   for (const name of plan.installed) {
     const full = path.join(plan.toolsDir, name);
     const sampledAt = new Date().toISOString();
@@ -587,7 +644,7 @@ async function runInstalledRound(root, plan, flags) {
       continue;
     }
     if (MANUAL_TOOLS.has(name)) {
-      results.push({ name, status: 'skip', rc: 3, bytes: 0, skipClass: '人工参数闸门（白名单内）', reason: '人工参数闸门：本件需命令行传参（如 hwnd）才有意义，无参时它自己 exit 2 拒绝打绿灯——装置自动批跑无从传参，记 skip；取证请手跑 node tools/' + name + ' <hwnd>' });
+      results.push({ name, status: 'skip', rc: 3, bytes: 0, skipClass: '人工参数闸门（白名单内）', reason: '人工参数闸门：本件需命令行传参（如 hwnd）才有意义，无参时它自己 exit 3（前置不满足，票 14-N 收敛口径）拒绝打绿灯——装置自动批跑无从传参，记 skip；取证请手跑 node tools/' + name + ' <hwnd>' });
       console.log(`⊘ [装机] ${name} — skip（人工参数闸门，需带 hwnd 手跑；取样 ${sampledAt}）`);
       continue;
     }
@@ -600,7 +657,27 @@ async function runInstalledRound(root, plan, flags) {
     else if (r.code === 3) status = 'skip';
     else status = 'fail';
     const reason = status === 'pass' ? '' : (r.code === 0 ? '零字节＝没跑，不算通过' : why || `rc=${r.code}`);
-    results.push({ name, status, rc: r.code, bytes, reason, skipClass: status === 'skip' ? '件自身 exit 3' : null });
+    // 票 14-M 附注：与共享/自起批同格式落盘（:1188 那段），失败件原文不再只剩「首行」——
+    // 装机轮的 stderr 首行同样会被 node 的 MODULE_TYPELESS_PACKAGE_JSON 警告顶掉（§108 症状三同族）。
+    let dumpPath = null;
+    if (status === 'fail') {
+      try {
+        if (!dumpRoot) dumpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `showcase-rtci-${process.pid}-`));
+        const failedDir = path.join(dumpRoot, 'failed');
+        fs.mkdirSync(failedDir, { recursive: true });
+        dumpPath = path.join(failedDir, `${name}.log`);
+        fs.writeFileSync(
+          dumpPath,
+          `件：${name}（装机轮）\nrc=${r.code} 字节=${bytes} 用时=${(r.ms / 1000).toFixed(1)}s 取样=${sampledAt}${r.note ? `\nnote：${r.note}` : ''}\n` +
+            `（票 14-M 附注：装机轮失败件 stdout+stderr 全量原文，本文件随留场根保留）\n\n── stdout ──\n${r.out.toString('utf8')}\n── stderr ──\n${r.err.toString('utf8')}`,
+          'utf8'
+        );
+      } catch (e) {
+        dumpPath = null;
+        console.log(`    （失败件原文落盘失败：${e.message}——「首行」兜底读数仍在）`);
+      }
+    }
+    results.push({ name, status, rc: r.code, bytes, reason, skipClass: status === 'skip' ? '件自身 exit 3' : null, dumpPath });
     const mark = status === 'pass' ? '✓' : status === 'skip' ? '⊘' : '✗';
     console.log(`${mark} [装机] ${name} — rc=${r.code} 字节=${bytes} ${(r.ms / 1000).toFixed(1)}s 取样=${sampledAt}${r.note ? `（${r.note}）` : ''}`);
     if (status !== 'pass') console.log(`    └ ${status === 'skip' ? 'skip 原因' : '首行'}: ${reason}`);
@@ -621,6 +698,9 @@ async function runInstalledRound(root, plan, flags) {
   }
   if (failed.length) {
     console.log(`装机轮失败件（先修再报绿）：${failed.map((x) => `${x.name}${x.rc === null ? '(缺失)' : `(rc=${x.rc})`}`).join('、')}`);
+    for (const x of failed) {
+      if (x.dumpPath) console.log(`    → ${x.name} 判据原文（绝对路径）：${x.dumpPath}`);
+    }
     process.exitCode = 1;
   } else if (passed.length === 0 && skipped.length > 0) {
     // 整轮级前置（装机版不在场等）仍 exit 3——单件级 skip 才按白名单规则转红（票 14-K 分界）
@@ -1128,6 +1208,17 @@ async function runMode(root, flags, only) {
       const idx = `${results.length + 1}/${plan.phase1.length + plan.phase2.length}`;
       const full = path.join(plan.toolsDir, name);
       if (!fs.existsSync(full)) continue; // 缺失件已在入口统一落账（M4），这里不重复记账
+      if (phase === '共享' && MANUAL_GATE_SHARED.has(name)) {
+        // 票 14-N：共享轮人工参数闸门——**预防性** skip，先于 ensureInstance/复位拍（形状照装机轮
+        // 人工参数闸门），批跑不再执行该件（零读数面的 21 字节假绿从执行面消失）；不碰共享实例、
+        // 不动 lastSharedName（它没跑，复位拍点名「前一件」时不算它）。名单与 LEGIT_SKIP_SHARED
+        // 单一真源；分离（skip 了却不在白名单）时聚合闸必红——红法 G7。
+        const reason = '人工参数闸门：本件要人工操作才有读数（install→真实操作→dump），自动批跑默认 dump 且无人装记录器＝恒「未安装记录器」21 字节假绿（票 14-M 待查读数已核）——预防性 skip 不执行；取证请手跑 node tools/' + name;
+        results.push({ name, phase, status: 'skip', rc: 3, bytes: 0, reason, skipClass: '人工参数闸门（白名单内）', dumpPath: null });
+        console.log(`⊘ ${idx} [${phase}] ${name} — rc=3 字节=0 0.0s（预防性 skip，未执行——票 14-N）`);
+        console.log(`    └ skip 原因: ${reason}`);
+        continue;
+      }
       const flee = FLEE_TRUE.has(name);
       let attempt = { code: 1, out: Buffer.alloc(0), err: Buffer.alloc(0), note: '', ms: 0 };
       let noRetry = false; // 复位拍判「根初值污染」这类确定性前置时置位：不许靠重试混成绿
@@ -1182,7 +1273,26 @@ async function runMode(root, flags, only) {
         else if (attempt.ms === 0) skipClass = '实例级前置（装置层抛错：重启上限/端口未就绪等）';
         else skipClass = '件自身 exit 3';
       }
-      results.push({ name, phase, status, rc: attempt.code, bytes, reason, skipClass });
+      // 票 14-M 任务 1：失败件原文落盘。走既有留场根（iso），不新开目录约定；failed/ 只在本件
+      // 真失败时创建（M2 反向对照：无失败件的轮次不得凭空生成 failed/，留场根自删语义不变）。
+      let dumpPath = null;
+      if (status === 'fail') {
+        try {
+          const failedDir = path.join(iso, 'failed');
+          fs.mkdirSync(failedDir, { recursive: true });
+          dumpPath = path.join(failedDir, `${name}.log`);
+          fs.writeFileSync(
+            dumpPath,
+            `件：${name}\nrc=${attempt.code} 字节=${bytes} 用时=${(attempt.ms / 1000).toFixed(1)}s${attempt.note ? `\nnote：${attempt.note}` : ''}\n` +
+              `（票 14-M 任务 1：失败件 stdout+stderr 全量原文，本文件随留场根保留）\n\n── stdout ──\n${attempt.out.toString('utf8')}\n── stderr ──\n${attempt.err.toString('utf8')}`,
+            'utf8'
+          );
+        } catch (e) {
+          dumpPath = null;
+          console.log(`    （失败件原文落盘失败：${e.message}——「首行」兜底读数仍在）`);
+        }
+      }
+      results.push({ name, phase, status, rc: attempt.code, bytes, reason, skipClass, dumpPath });
       const mark = status === 'pass' ? '✓' : status === 'skip' ? '⊘' : '✗';
       console.log(`${mark} ${idx} [${phase}] ${name} — rc=${attempt.code} 字节=${bytes} ${(attempt.ms / 1000).toFixed(1)}s${attempt.note ? `（${attempt.note}）` : ''}`);
       if (status !== 'pass') console.log(`    └ ${status === 'skip' ? 'skip 原因' : '首行'}: ${reason}`);
@@ -1227,7 +1337,7 @@ async function runMode(root, flags, only) {
       uncaughtDelta = (deltaText.match(/uncaughtException/g) || []).length;
       uncaughtAssertionRan = true;
       if (uncaughtDelta > 0) {
-        results.push({ name: '(整轮) uncaughtException 增量==0', phase: '断言', status: 'fail', rc: 1, bytes: 0, reason: `实例日志 uncaughtException 增量 ${uncaughtDelta}（§83：兜底把功能失效藏成一行日志）` });
+        results.push({ name: '(整轮) uncaughtException 增量==0', phase: '断言', status: 'fail', rc: 1, bytes: 0, reason: `实例日志 uncaughtException 增量 ${uncaughtDelta}（§83：兜底把功能失效藏成一行日志）`, dumpPath: logPath });
         for (const l of deltaText.split('\n').filter((l) => l.includes('uncaughtException')).slice(0, 5)) console.log('  日志 > ' + l.trim().slice(0, 200));
       }
     }
@@ -1241,7 +1351,14 @@ async function runMode(root, flags, only) {
   const illegitSkips = skipped.filter((r) => !LEGIT_SKIP_SHARED.has(r.name));
   const unfit = illegitSkips.length ? `本轮不合格：${illegitSkips.length} 件没跑——` : '';
   console.log(`\n${unfit}PASS ${passed.length}/${results.length - skipped.length}（绿 ${passed.length} / 失败 ${failed.length} / skip：白名单内 ${legitSkips.length}／白名单外 ${illegitSkips.length}）`);
-  if (failed.length) console.log(`失败件（先修再报绿）：${failed.map((r) => `${r.name}${r.rc === null ? '(缺失)' : `(rc=${r.rc})`}`).join('、')}`);
+  if (failed.length) {
+    console.log(`失败件（先修再报绿）：${failed.map((r) => `${r.name}${r.rc === null ? '(缺失)' : `(rc=${r.rc})`}`).join('、')}`);
+    // 票 14-M 任务 1：汇总行必须带原文绝对路径——只给件名＋rc 等于让人再考古一遍
+    for (const r of failed) {
+      if (r.dumpPath) console.log(`    → ${r.name} 判据原文（绝对路径）：${r.dumpPath}`);
+      else console.log(`    → ${r.name} 无件级原文（件缺失或落盘失败——「首行」兜底读数见逐件行）`);
+    }
+  }
   if (skipped.length) {
     // 逐件打「件名＋原因分类＋原因首行」——分清「闸门设计如此」与「该件没跑成」（票 14-K 任务 2）
     console.log('skip 件（白名单内＝既有闸门设计如此；白名单外＝该件没跑成，整轮不计绿）：');
@@ -1307,7 +1424,7 @@ async function runMode(root, flags, only) {
 function ledgerMode(root) {
   const ledgerPath = path.join(root, 'docs', 'findings', LEDGER_NAME);
   const toolsDir = path.join(root, 'tools');
-  const names = fs.readdirSync(toolsDir).filter((f) => f.endsWith('.js')).sort();
+  const names = listToolEntries(toolsDir).js; // 枚举单一真源（票 14-R 任务 2a）：台账面与编队面同源，禁第二份谓词
 
   const corpus = [];
   const push = (p) => corpus.push(p);

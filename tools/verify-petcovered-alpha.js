@@ -8,8 +8,9 @@
 //   2) SLWA alpha=128（半透明）→ 零候选、零重申（该类名）；
 //   3) ULW per-pixel（全 alpha=0 位图，模拟 BongoCat 形态）→ 零候选、零重申（保住 §61 子坑 4）。
 //   每用例打印造窗的 GLWA 读数（probe-layered-attr.js 同口径）作证据。
-// 退出码：0 = 三用例全过；1 = 有断言不过或环境不满足（实测读数见输出）；
-//         2 = 整体超时/未捕获异常；3 = 已有桌宠实例在跑（本件要求独占，理由见 findBlockingInstances）。
+// 退出码：0 = 三用例全过；1 = 断言不过/环境不满足/整体超时/脚本异常（异常打「脚本异常：」前缀；
+//         票 14-N 起超时与脚本异常由 2 收敛归判定面 1——超时是「测出来坏」不是「测不了」）；
+//         2 = 仅人为中断（SIGINT，装置面语义）；3 = 已有桌宠实例在跑（本件要求独占，理由见 findBlockingInstances）。
 // 临时目录（%TEMP%\petcover-alpha-*）纪律：exit 0 时删掉自己建的隔离数据目录；非 0 退出
 // 保留现场便于查因，并打印应用日志（identity.LOG_NAME）/ electron-stdout.log 的完整路径（手动删即可）。
 // 纯 node + koffi，不引入 Electron 依赖（铁律 5）。koffi 造窗走 §61 子坑 5 的定型写法：
@@ -176,8 +177,8 @@ function cleanup(exitCode) {
   } catch {}
 }
 process.on('exit', cleanup);
-process.on('SIGINT', () => process.exit(2));
-process.on('unhandledRejection', (e) => { console.error('unhandledRejection:', e); process.exit(2); });
+process.on('SIGINT', () => process.exit(2)); // 人为中断＝测不了（装置面），保持 2——票 14-N 收敛后本件 2 的唯一残留用途
+process.on('unhandledRejection', (e) => { console.error('脚本异常：unhandledRejection:', e); process.exit(1); });
 
 const results = [];
 function record(name, ok, detail) {
@@ -324,5 +325,5 @@ async function main() {
   process.exit(ok ? 0 : 1);
 }
 
-setTimeout(() => { console.error('✗ 整体超时（120s）'); process.exit(2); }, 120000).unref();
-main().catch((e) => { console.error('✗', e); process.exit(2); });
+setTimeout(() => { console.error('✗ 整体超时（120s）'); process.exit(1); }, 120000).unref();
+main().catch((e) => { console.error('脚本异常：', e); process.exit(1); });

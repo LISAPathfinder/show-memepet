@@ -16,11 +16,26 @@
 // 场景 14（票 11-N）：摆放三路接线的函数体双向断言——walkPetTo/fleeFromCursor/pet:scale-end
 // 体内必须出现内容矩形串、不得出现视觉矩形串（全局搜是恒绿守卫，必须定界函数体）。
 //
+// 场景 17/18 匹配口径（票 14-P 起，14-Q 扩到场景 17；校验轮 Va/Vb/Q1 实测的三处边界）：
+// 两个场景的匹配面都先过 stripForScan——形态出现在**注释或字符串字面量**里不再被拦，
+// 这是有意豁免：本仓「在代码里写教训」的文档手法（日志串/注释引用被禁 API 是正常写法，
+// 裸词形态 14-C 起就是同一口径），一条说明注释不该把 CI 弄红；stripForScan 逐字符等长
+// 替换且保留 \n\r ⇒ 行号不漂（P1/Q8 红行实测复验）。**豁免必须两个场景同一套理由**：
+// 14-P 只把场景 18 换到剥后匹配面，场景 17 还扫未剥原文——同类误红只治了一半（14-Q）。
+// 可选链 petWindow?.set* 收进普查与禁串——旧形态要求字面 petWindow. ，一个 ? 就能原样
+// reopen 14-C 的 g3 恒绿洞（Vb 实测）或体外禁串（Q1 实测 rc=0）。**方括号字符串属性名
+// 形态 petWindow['set*']( 结构上测不到，显式豁免**：属性名本身是字符串字面量，与上一条
+// 豁免同一剥面（收它＝重开 Va 误红），且属票 14-O 已声明边界外的「动态调用」族——P4
+// 红法按豁免分支判过，不是静默绿。
+//
 // 用法：node tools/verify-unlock-position.js [仓库根，默认 cwd]
 // 退出码：0 = 断言全绿；1 = 断言失败（脚本异常也落 1）；3 = 前置不满足（源码提取不到）。
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+// 场景 18 普查前剥注释/字符串复用 verify-build-files 的等长净化（票 14-P；该件有 require.main
+// 守卫、被 require 不自跑，verify-checkjs.js 已是同款用法先例）——禁自写第二份注释剥离器。
+const { stripForScan } = require('./verify-build-files.js');
 
 const root = process.argv[2] || process.cwd();
 const mainPath = path.join(root, 'main.js');
@@ -30,20 +45,35 @@ if (!fs.existsSync(mainPath)) {
 }
 const src = fs.readFileSync(mainPath, 'utf8');
 
-// 括号配对提取函数体（模板串里的 ${...} 大括号天然成对，注释无裸大括号，配平可靠）
-function extractFn(name) {
-  const i = src.indexOf(`function ${name}(`);
-  if (i < 0) return null;
+// 括号配对定位/提取函数体（模板串里的 ${...} 大括号天然成对，注释无裸大括号，配平可靠）。
+// 票 14-Q：定位只算偏移、正文按面切片——stripForScan 等长但内容变了，场景 17 换剥后匹配面
+// 后 body 必须与计数同面（拿 raw body 去 split 剥后文本必 split 不命中 ⇒ 体内合法兜底被算进
+// 体外 ⇒ 当场误红且症状像禁串写错）。定位一律在 raw src 上做：extractAt 的锚点含字符串
+// 字面量（'pet:scale-end'），剥后找不回锚点；偏移两面通用（等长）。
+function locateBraced(i) {
   let depth = 0;
   const open = src.indexOf('{', i);
+  if (open < 0) return null;
   for (let k = open; k < src.length; k++) {
     if (src[k] === '{') depth++;
     else if (src[k] === '}') {
       depth--;
-      if (depth === 0) return src.slice(i, k + 1);
+      if (depth === 0) return { start: i, end: k + 1 };
     }
   }
   return null;
+}
+function locateFn(name) {
+  const i = src.indexOf(`function ${name}(`);
+  return i < 0 ? null : locateBraced(i);
+}
+function locateAt(anchor) {
+  const i = src.indexOf(anchor);
+  return i < 0 ? null : locateBraced(i);
+}
+function extractFn(name) {
+  const loc = locateFn(name);
+  return loc ? src.slice(loc.start, loc.end) : null;
 }
 const FN_NAMES = ['resolvePetPosition', 'scheduleDeferredPositionCheck', 'runDeferredPositionCheck', 'petEdgeState', 'clampPetOriginToWorkArea'];
 const fns = FN_NAMES.map((n) => extractFn(n));
@@ -53,21 +83,11 @@ if (fns.some((f) => !f)) {
   process.exit(3);
 }
 
-// 按锚点提取代码块（票 11-N）：pet:scale-end 是 ipcMain.on('pet:scale-end', (_e, v) => { … })
-// 箭头函数，不是 function 声明，extractFn 取不到。从锚点后第一个 { 做括号配对。
+// 按锚点定位代码块（票 11-N）：pet:scale-end 是 ipcMain.on('pet:scale-end', (_e, v) => { … })
+// 箭头函数，不是 function 声明，locateFn/extractFn 取不到。从锚点后第一个 { 做括号配对。
 function extractAt(anchor) {
-  const i = src.indexOf(anchor);
-  if (i < 0) return null;
-  let depth = 0;
-  const open = src.indexOf('{', i);
-  for (let k = open; k < src.length; k++) {
-    if (src[k] === '{') depth++;
-    else if (src[k] === '}') {
-      depth--;
-      if (depth === 0) return src.slice(i, k + 1);
-    }
-  }
-  return null;
+  const loc = locateAt(anchor);
+  return loc ? src.slice(loc.start, loc.end) : null;
 }
 
 // 票 11-N 场景 14：摆放三路（走过去/让开/缩放回挪）的接线断言对象。
@@ -89,15 +109,16 @@ if (missingWiring.length) {
 // 校验轮⑪ M5/M6 实测：把 applyPetPosition 或缩放后回挪退回 petWindow.setPosition，
 // 本件仍 PASS 52/0、字节一字不差（运行时件 verify-drag-clamp 也测不到，它只驱动 moveBy
 // 与合成手势）。取体失败必须 exit 3：函数被改名时这些断言不许静默跳过（11-N 立的规矩）。
+// 票 14-Q：存 loc 偏移而非正文——场景 17 的 raw/stripped 两面各按偏移切片，正文不再提前定型。
 const LANDING = [
-  { key: 'movePetWindowTo', body: extractFn('movePetWindowTo'), self: true },
-  { key: 'applyPetPosition', body: extractFn('applyPetPosition') },
-  { key: 'walkPetTo', body: extractFn('walkPetTo') },
-  { key: 'runDeferredPositionCheck', body: extractFn('runDeferredPositionCheck') },
-  { key: 'pet:scale-end', body: extractAt("ipcMain.on('pet:scale-end'") },
-  { key: 'pet:move-by', body: extractAt("ipcMain.on('pet:move-by'") },
+  { key: 'movePetWindowTo', loc: locateFn('movePetWindowTo'), self: true },
+  { key: 'applyPetPosition', loc: locateFn('applyPetPosition') },
+  { key: 'walkPetTo', loc: locateFn('walkPetTo') },
+  { key: 'runDeferredPositionCheck', loc: locateFn('runDeferredPositionCheck') },
+  { key: 'pet:scale-end', loc: locateAt("ipcMain.on('pet:scale-end'") },
+  { key: 'pet:move-by', loc: locateAt("ipcMain.on('pet:move-by'") },
 ];
-const missingLanding = LANDING.filter((l) => !l.body);
+const missingLanding = LANDING.filter((l) => !l.loc);
 if (missingLanding.length) {
   console.error('前置不满足（exit 3）：落位通道的函数体提取失败（' +
     missingLanding.map((l) => l.key).join('/') + '）');
@@ -601,16 +622,32 @@ console.log('场景 16：core/geometry.js 两套矩形口径仍分开，且与�
   assert(con.height !== vis.height, '红线①：内容口径与视觉口径仍是两个数（合并即红）', `内容高 ${con.height} vs 视觉高 ${vis.height}`);
 }
 
-console.log('场景 17：六条落位通道（票 14-C）——petWindow.setPosition 只许出现在 movePetWindowTo 体内');
-{
-  // 只许匹配**带接收者**的 petWindow.setPosition。main.js 里裸 setPosition 另有 5 处注释/日志串
-  //（movePetWindowTo 的注释、clamp 注释、固定窗迁移注释、stopWalk('setPosition 失败')、
-  // pet:move-by 的行尾注释）——全文搜裸词一加就红，而 includes 否定式又是恒绿守卫（铁律 3／§77）。
-  // win.setPosition 是**非桌宠窗**（菜单/锚点窗）的合法调用，不许禁。
-  const CALL_SRC = 'petWindow\\.setPosition';
-  const count = (s) => (s.match(new RegExp(CALL_SRC, 'g')) || []).length;
+// petWindow 接收者调用形态的单一真源（票 14-Q 禁第二真源②）：场景 17 禁串与场景 18
+// 普查共用这一份定义、api 参数化（传具体名＝17 禁串；传捕获组＝18 家族普查）——Q1 能
+// 活下来的土壤正是两处口径各自漂移：14-P 收了 18 的可选链、17 还停在字面点形态。点不可
+// 缺省：真代码里接收者与方法名之间必有 . 或 ?.，「可缺省」只会收进剥后文本上已不存在的
+// 注释/字符串形态。每次调用返回新正则（g），match/matchAll 无 lastIndex 共享问题。
+const RECEIVER_CALL_RE = (api) =>
+  new RegExp('petWindow\\b\\s*(?:\\?\\.|\\.)\\s*' + api + '\\s*\\(', 'g');
+// 两个场景共用的剥后匹配面（票 14-P 引入、14-Q 提为件级）：注释与字符串内容有意豁免
+//（理由见件头，17/18 同一句话），stripForScan 等长 ⇒ locate* 偏移与行号两面通用。
+const scanSrc = stripForScan(src);
 
-  const selfBody = LANDING.find((l) => l.self).body;
+console.log('场景 17：六条落位通道（票 14-C；14-Q 禁串收可选链＋匹配面剥注释）——petWindow.setPosition 只许出现在 movePetWindowTo 体内');
+{
+  // 只许匹配**带接收者**的 petWindow.setPosition，正则与场景 18 共用一份定义
+  //（RECEIVER_CALL_RE——禁第二真源②：14-P 收了 18 的可选链、这里停在字面点形态
+  // `petWindow\.setPosition`，体外一条 `petWindow?.setPosition(` 两道闸都看不见＝Q1）。
+  // win.setPosition 是**非桌宠窗**（菜单/锚点窗）的合法调用，不许禁；裸 setPosition 在
+  // main.js 另有 5 处注释/日志串——剥后匹配面下注释/字符串内容本来就不在面上（豁免口径
+  // 见件头，与场景 18 同一句话），真正的边界是「接收者必须是 petWindow」。
+  // 票 14-Q 任务 2：计数、body 提取、体外挖空全部改在剥后文本（scanSrc）上——混搭禁令：
+  // stripForScan 等长但内容变了，拿 raw body 去 split 剥后文本必 split 不命中 ⇒ 体内合法
+  // 兜底被算进体外 ⇒ 当场误红且症状像禁串写错。
+  const count = (s) => (s.match(RECEIVER_CALL_RE('setPosition')) || []).length;
+
+  const selfLoc = LANDING.find((l) => l.self).loc;
+  const selfBody = scanSrc.slice(selfLoc.start, selfLoc.end);
   const inSelf = count(selfBody);
   // 正向对照只要求「体内 ≥1」而不是「恰 1」：票面 R6 明确要求「把体内 fns.setPos 也换成
   // petWindow.setPosition（兜底保留）」时本件**不红**——那是入口内部的问题，归运行时件
@@ -623,27 +660,68 @@ console.log('场景 17：六条落位通道（票 14-C）——petWindow.setPosi
     console.log(`  · 提示：体内 ${inSelf} 处 petWindow.setPosition——入口内部退回 setPosition 归运行时件 verify-drag-clamp 判（票 14-C R6 分工）`);
   }
 
-  // 反向：把**提取到的函数体原文**整段挖掉后，全文命中必须 0。
-  // 红时按原文偏移报行号——挖掉后再找位置只会得到挖空后的假行号，找不到根因。
-  const outside = src.split(selfBody).join('');
-  const selfStart = src.indexOf(selfBody);
+  // 反向：把 movePetWindowTo 的**剥后函数体**按 loc 偏移整段挖掉后，剥后全文命中必须 0。
+  // 红行按剥后偏移报行号——等长 ⇒ 与原文件一致；这条不靠注释声明，由 Q8 红行行号实测复验。
+  const outside = scanSrc.slice(0, selfLoc.start) + scanSrc.slice(selfLoc.end);
   const strayLines = [];
-  if (selfStart >= 0) {
-    for (const m of src.matchAll(new RegExp(CALL_SRC, 'g'))) {
-      if (m.index >= selfStart && m.index < selfStart + selfBody.length) continue;
-      strayLines.push(src.slice(0, m.index).split('\n').length);
-    }
+  for (const m of scanSrc.matchAll(RECEIVER_CALL_RE('setPosition'))) {
+    if (m.index >= selfLoc.start && m.index < selfLoc.end) continue;
+    strayLines.push(src.slice(0, m.index).split('\n').length);
   }
   assert(count(outside) === 0,
-    '体外不变量：movePetWindowTo 之外全文 0 处 petWindow.setPosition',
+    '体外不变量：movePetWindowTo 之外全文 0 处 petWindow.setPosition（含 ?. 形态）',
     count(outside) === 0 ? '0 处' : `${count(outside)} 处，行号 ${strayLines.join(',')}`);
 
   for (const l of LANDING) {
     if (l.self) continue;
+    const body = scanSrc.slice(l.loc.start, l.loc.end);
     // 落位必须真的交给 movePetWindowTo——只钳不挪、或绕回 setPosition 都算接线断。
-    assert(l.body.includes('movePetWindowTo('),
+    assert(body.includes('movePetWindowTo('),
       `${l.key} 体内落位走 movePetWindowTo（票 14-B 接线，不是 setPosition）`);
-    assert(count(l.body) === 0, `${l.key} 体内不含 petWindow.setPosition`);
+    assert(count(body) === 0, `${l.key} 体内不含 petWindow.setPosition（含 ?. 形态）`);
+  }
+}
+
+console.log('场景 18：petWindow.set* 白名单普查（票 14-O；14-P 剥注释＋收可选链；14-Q 起与场景 17 共用一份接收者正则）——同接收者同家族的新调用点即红');
+{
+  // 14-C 校验轮⑫ 实测的恒绿洞：任一落位通道体内插第三条改几何 API
+  //（petWindow.setBounds({ x: pos.x, y: pos.y })，movePetWindowTo( 原样保留）时，
+  // 场景 17 只判「每体内必须含入口调用＋不含 setPosition」，对该突变全绿。本场景按
+  // 家族普查：main.js 全文带接收者的 petWindow.set[A-Z][A-Za-z]*( 命中集合 ⊆ 白名单。
+  // 匹配只认带接收者的调用形态——裸 setPosition 在 main.js 另有 5 处注释/日志串、
+  // win.setPosition 是非桌宠窗的合法调用，写宽会在未突变代码上误红（14-C R5a）；
+  // 普查面只认 petWindow 接收者（\b 挡 petWindowX 类前缀）。setPosition 的「只许
+  // movePetWindowTo 体内」已由场景 17 体外不变量钉住，这里只做家族普查、不重复体检查。
+  // 票 14-P 两处口径：① 匹配面用剥后文本 scanSrc（14-Q 起为件级共用定义，复用等长净化、
+  // 禁第二份剥离器），注释/字符串里的形态**有意豁免不拦**（理由见件头）；stripForScan
+  // 保留 \n\r ⇒ m.index 对原 src 的行列不漂，行号算法沿用（P1 红行行号实测复验过）。
+  // stripForScan 也剥单/双引号字符串内容与模板串文本，但 ${…} 插值内是真代码、原样保留
+  // 仍被拦。② 可选链 petWindow?. 收进普查面——旧正则要求字面 petWindow. ，一个 ? 就能
+  // 原样 reopen g3（Vb 实测）；14-Q 起普查正则从 RECEIVER_CALL_RE 派生（与场景 17 禁串
+  // 一份定义，防两处口径再各自漂移）。
+  // 仍结构上测不到的形态（别把没红读成没洞，逐条点名）：方括号**字符串属性名**
+  // petWindow['set*'](/["…"]/——属性名本身是字符串字面量，与注释/字符串豁免同一剥面，
+  // 收它＝重开 Va；且属 14-O 已声明边界外的「动态调用」族，P4 红法按豁免分支判过）、
+  // 换接收者（win.set*）、别名句柄（const pw = petWindow; pw.set*(…)）、动态拼接/下标
+  // 变量（petWindow['set'+'Bounds']、petWindow[varName]）；场景 17 的体外禁串自票 14-Q
+  // 起与本场景共用一份接收者形态，`?.setPosition` 体外两道闸都看得见了（Q1 红法实测）。
+  // §77①：否定式普查必须配非空正向对照——0 命中＝正则失效或接收者被换，普查整体
+  // 恒绿，先断言命中 ≥1，再逐处点名行号（白名单外命中 ⇒ 断言失败，逐处一条红）。
+  const CENSUS_RE = RECEIVER_CALL_RE('(set[A-Z][A-Za-z]*)');
+  const WHITELIST = ['setAlwaysOnTop', 'setPosition'];
+  const hits = [...scanSrc.matchAll(CENSUS_RE)].map((m) => ({
+    line: src.slice(0, m.index).split('\n').length,
+    api: m[1],
+  }));
+  assert(hits.length > 0,
+    '非空正向对照：全文 petWindow.set*（带接收者）命中 ≥1（0 处＝正则失效或接收者被换）',
+    `共 ${hits.length} 处`);
+  for (const h of hits) {
+    assert(WHITELIST.includes(h.api),
+      `行 ${h.line}: petWindow.${h.api}( … ) ∈ 白名单 {${WHITELIST.join(', ')}}`,
+      WHITELIST.includes(h.api)
+        ? '白名单内'
+        : `白名单外！只许 ${WHITELIST.join('/')}——可能是真回归，先停下回报，不许加白名单消红（票 14-O）`);
   }
 }
 

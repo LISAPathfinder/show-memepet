@@ -2,8 +2,8 @@ name: CI
 
 # 只跑纯逻辑回归件（清单以 `run: node tools/…` 步骤为准，动态解析、不手抄件数）。
 # 为什么有 npm ci：verify-archive-import 依赖 adm-zip 与 7z-wasm（纯 JS/WASM，无原生编译，
-#   --ignore-scripts 下 electron 不触发二进制下载）；verify-checkjs 依赖 typescript（devDep，
-#   精确 pin——棘轮读数随编译器版本整体漂，禁 ^）。其余件零第三方依赖。
+#   --ignore-scripts 下 electron 不触发二进制下载）；verify-checkjs 与 verify-checkjs-tiers 依赖 typescript
+#   （devDep，精确 pin——棘轮读数随编译器版本整体漂，禁 ^）。其余件零第三方依赖。
 # 为什么没有装 Electron：test-layout-menu / verify-walk / test-data-root / verify-pass-hold /
 #   verify-identity / verify-autostart-migration / verify-single-writer / verify-fallback-box /
 #   verify-rebuild-grace / verify-hit-region / verify-unlock-position / verify-box-cadence /
@@ -154,3 +154,23 @@ jobs:
       # 命中即红——有人用脚本造加载器时「加载清单能从静态文本推出」的前提就失效了
       - name: checkJs 静态层棘轮（tsc --noEmit）
         run: node tools/verify-checkjs.js
+
+      # checkJs 分档棘轮（票 14-L，CI 第 19 件）：严格档（tsconfig.tier-*.json，glob 枚举）逐档三组断言——
+      # T1 档枚举与登记表双向相等（删档文件/漏登记必红）、T2 应检面＝手写 manifest 与 tsc 实际输入双向相等
+      # （改 include 不改 manifest 也红——堵并集法「漏一个 glob 静默空转」）、T3 棘轮 + T4 基线台账
+      # （n 上调必带 history 票号+理由，只改数字不补记录必红）。基础档 tsconfig.checkjs.json 仍由
+      # verify-checkjs 管（a–f₂ 不动）；依赖 typescript（与上一件同款 devDep 精确 pin）。
+      # ⚠ 分档 tsconfig 的 extends 是逐属性覆盖：基档显式 noImplicitAny:false 会在子档 strict:true 下存活，
+      #   tier 两条旗标必须都显式写 true，否则 TS7006 一条不报、棘轮空转（开档实测，见件头注释）。
+      - name: checkJs 分档棘轮（严格档 manifest＋基线台账）
+        run: node tools/verify-checkjs-tiers.js
+
+      # koffi 绑定 ⇄ native 能力契约接线闸（票 14-M 任务 4b，CI 第 20 件）：源码级双向相等——
+      # main.js / tools/inject-click.js 的 koffi 绑定（Win32 导出名＋参数元数）↔ types/contract-native-koffi.d.ts
+      # 契约登记，匹配键＝Win32 导出名（deleteTab 走 COM vtable、字面名产品码 0 命中是正常现象，
+      # needle 搜产品码这条路对契约不成立——票 14-M §五）。件内登记表是第三锚点：契约与绑定**同时**
+      # 改坏同一名在两两比对下恒绿（同源恒真，§91 同族），对照登记表才红（红法 M6）；改任何一侧
+      # 都必须有意识更新该件（棘轮语义）。纯 node 零依赖零实例；与 14-L 的 T6 互补——
+      # T6 管「契约自己的用例真被 tsc 检」，本件管「契约 == 真源绑定」。
+      - name: koffi 绑定⇄契约接线闸（双向相等＋登记表第三锚）
+        run: node tools/verify-koffi-contract.js

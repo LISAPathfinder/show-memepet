@@ -106,6 +106,17 @@ function normalizeRoot(r) {
   }
 }
 
+// tsc 输出按行解析的正则（守卫前声明：导出引用在 require 时即取值，const 有 TDZ 不能留在下方）
+const ERR_LINE_RE = /^([^(]+)\((\d+),(\d+)\): error (TS\d+):/;
+
+// require 守卫（票 14-L）：tools/verify-checkjs-tiers.js 复用下面导出的 tsc 执行/解析/派生函数，
+// 被 require 时不得触发前置检查与主流程（意图与 verify-build-files 的 require.main 守卫同款；
+// 用 CJS 顶层 return 提前返回，下方执行体保持逐字不动——机械改动，判据语义零变）。
+if (require.main !== module) {
+  module.exports = { runTsc, runTscListFiles, parseTscFileList, deriveCheckFaceA, ERR_LINE_RE, normalizeRoot };
+  return;
+}
+
 const root = normalizeRoot(process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(__dirname, '..'));
 const tsconfigPath = path.join(root, 'tsconfig.checkjs.json');
 if (!fs.existsSync(tsconfigPath)) {
@@ -305,8 +316,6 @@ function parseTscFileList(text, root) {
   }
   return bSet;
 }
-
-const ERR_LINE_RE = /^([^(]+)\((\d+),(\d+)\): error (TS\d+):/;
 
 (async () => {
   const r = await runTsc(tscBin, tsconfigPath, root);
