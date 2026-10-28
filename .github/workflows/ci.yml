@@ -7,7 +7,8 @@ name: CI
 # 为什么没有装 Electron：test-layout-menu / verify-walk / test-data-root / verify-pass-hold /
 #   verify-identity / verify-autostart-migration / verify-single-writer / verify-fallback-box /
 #   verify-rebuild-grace / verify-hit-region / verify-unlock-position / verify-box-cadence /
-#   verify-ctrl-reconcile / verify-build-files / verify-docs-structure
+#   verify-ctrl-reconcile / verify-build-files / verify-docs-structure / verify-toast-aumid-order
+#   verify-tripleclick-trace
 #   这些件零第三方依赖，
 #   只 require 仓库内 js 与 node 内置模块（config.js 的 require('electron') 是函数内惰性调用，
 #   纯 node 下走不到那条分支），所以 checkout + node 即可跑，不必装 Electron、不必编译原生模块。
@@ -174,3 +175,29 @@ jobs:
       # T6 管「契约自己的用例真被 tsc 检」，本件管「契约 == 真源绑定」。
       - name: koffi 绑定⇄契约接线闸（双向相等＋登记表第三锚）
         run: node tools/verify-koffi-contract.js
+
+      # toast 归属名顺序不变量（票 14-S 任务 3，CI 第 21 件）：shell 在某 AUMID 的**第一条**通知落地时
+      # 就解析并缓存归属名，之后补写键不回头改（探针三档实测）——所以「DisplayName 键早于首条通知」是
+      # 必须守住的不变量，而旧代码用异步 execFile 在启动路径注册，安全全靠「启动毫秒级 vs 通知几十分钟后」
+      # 这个时序巧合，没有任何东西守着。本件 vm 真调 ensureAumidDisplayName（桩 execFileSync）考三态措辞/
+      # 写入键名（件内 PINNED 第三锚，S-b 错键名红）/同步完成（退回 execFile 异步红），再按 bootApp 体内
+      # 行号考注册点早于任何可发通知的调用点（把注册挪到 restartReminder 之后＝S-a 必红）。
+      # ⚠ **能力边界（件输出第一行就打印）**：归属名没有自动判据面（Setting 读回空串／History 抛空引用），
+      #   本件判不了「通知中心显示的是不是这个名字」，只判顺序与注册行为——写不成显示名判据就别写成假守卫（§91 同族）。
+      - name: toast 归属名顺序不变量（注册早于首条通知＋三态措辞）
+        run: node tools/verify-toast-aumid-order.js
+
+      # Ctrl+三击「为什么没成」的留痕（票 14-U 任务 A/C，CI 第 22 件）：真人实测 9/30≈30%，
+      # 而 21 次丢弃在日志里零行——三条静默出口（OS 连击计数不是 3／Ctrl 掉一拍／点在桌宠身上）
+      # 互斥性无法区分，归因只能编机理链。本件先把「没成」变成读数，**不改触发语义**：
+      # 三层牙齿——①行为级：真驱动 walk.js 的 detector＋gestureTrace（R/T 组：原因枚举、
+      #   一次手势最多一行、30 次尝试恰 30 行不是 90 行）；②**vm 真跑 main.js 的 onGlobalMouseDown**
+      #   （V 组：§83/§63 的共性是判定层全绿而运行时路径炸了，字面接线断言审不出拼错变量名，
+      #   所以断言的是真落进 logLine 的那几行）；③接线级：五个出口**按分支体定界**（W 组）＋
+      #   边界拍照（G 组：`clicks === 3` 恰好 3、三个阈值、自攒兜底仍只在 !osAvailable 时跑——
+      #   A′ 未拍板前不许两路并行，否则六连点会被算成两次三击）。
+      # ⚠ 能力边界（件输出第一行就打印）：判不了「真实鼠标点击有没有到钩子」；「只点两下就停手」
+      #   这类丢弃有意不留行——加定时器去猜「串断了」会把实测 700ms 间隔也认的慢三击谎报成未成。
+      #   真人复测的数法因此是「未成行数 ≤ 尝试次数」，缺的那部分正是这条边界。
+      - name: 三击未成留痕（原因枚举＋限流＋vm 真跑出口接线）
+        run: node tools/verify-tripleclick-trace.js

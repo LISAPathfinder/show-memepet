@@ -1,9 +1,37 @@
 // @runtime: ci —— CI 强制层判据件：走过去纯逻辑，纯 node，执行面在 run-ci.js
 // 「走过去」纯逻辑的自测（纯 node，不需要 electron / 不需要真实点击）：
-//   node tools/verify-walk.js
+//   node tools/verify-walk.js [仓库根绝对路径]   ← 突变自测传影子根（相对路径会骗过前置，校验轮⑫实测）
 // 覆盖三击判定（慢三击 / 三次分散 / 冷却 / OS 连击计数路径）、路径规划（速度/时长钳制）、
-// 按进度取点、朝向判定，以及落点居中 + 三面钳制（左上、右下、副屏负坐标）。
-const walk = require('../walk');
+// 按进度取点、朝向判定、落点居中 + 三面钳制（左上、右下、副屏负坐标），
+// 以及落点内收量的**窗口尺寸口径**（票 14-U 任务 B：真实 605 而不是常量 600，含 main.js 接线）。
+const fs = require('fs');
+const path = require('path');
+
+const root = path.resolve(process.argv[2] || path.join(__dirname, '..'));
+const blocked = (msg) => {
+  console.error(`前置不满足（exit 3）：${msg}`);
+  process.exit(3);
+};
+// 按**影子根绝对路径** require：突变副本里的 walk.js 必须真被加载（§96 装置仓≠被测仓同族坑）
+const walk = require(path.join(root, 'walk.js'));
+
+if (walk.contentToOrigin === undefined) {
+  blocked('walk.js 未导出 contentToOrigin——落点内收量换名/删除时，任务 B 的断言不许静默跳过');
+}
+
+// 括号配平提取函数体（按传入文本 + 该文本内偏移，别拿切片偏移去搜整份文件）
+function extractFn(text, name) {
+  const i = text.indexOf(`function ${name}(`);
+  if (i < 0) return null;
+  const open = text.indexOf('{', i);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let k = open; k < text.length; k++) {
+    if (text[k] === '{') depth++;
+    else if (text[k] === '}' && --depth === 0) return text.slice(i, k + 1);
+  }
+  return null;
+}
 
 let pass = 0;
 let fail = 0;
@@ -190,6 +218,69 @@ check('左上角外：钳进工作区', walk.computeWalkTarget({ x: 5, y: 5 }, W
 check('右下角外：整体不越界', walk.computeWalkTarget({ x: 1918, y: 1035 }, WA, PET), { x: 1660, y: 740 });
 const WA2 = { x: -1920, y: 0, width: 1920, height: 1040 }; // 左侧副屏（负坐标）
 check('副屏（负坐标工作区）落点正确', walk.computeWalkTarget({ x: -1800, y: 100 }, WA2, PET), { x: -1920, y: 0 });
+
+// ---- 落点内收量的窗口尺寸口径（票 14-U 任务 B）----
+// 装机日志里贴左缘的「窗口 -300」是**内容矩形钳到 workArea.x=0 的正常结果**（票面「走过去没跟上内容
+// 矩形口径」这条假设被实测推翻）；同一套算式里真正没跟上的是内收量的来源——常量名义窗 600，
+// 而本机 113% 缩放下 getBounds() 回读 605（PITFALLS §105），少算的 5px 让贴右/下缘的落点把
+// 可见内容顶出工作区（票 14-B/§98 同族：那条只修了拖拽通道的 clampPetOriginToWorkArea）。
+console.log('落点内收量（真实窗口尺寸 vs 常量模型，票 14-U 任务 B）');
+{
+  const WA1 = { x: 0, y: 0, width: 2560, height: 1400 }; // 本机实测算得：单屏 2560×1440，工作区高 1400
+  const CONTENT = { width: 300, height: 160 }; // scale=1 的 contentSize（core/geometry 口径）
+  const REAL_WIN = { width: 605, height: 605 }; // 本机真实窗口 DIP 回读
+  const CONST_WIN = { width: 600, height: 600 }; // 件内第三锚：常量模型的名义窗＝改前口径
+  // 从窗口原点反算**真实**内容矩形（渲染端 #pet-root 钉窗口右下角，内收量由真实窗尺寸决定）
+  const contentOf = (origin, win) => ({
+    x: origin.x + win.width - CONTENT.width,
+    y: origin.y + win.height - CONTENT.height,
+  });
+  const fits = (r) =>
+    r.x >= WA1.x && r.y >= WA1.y && r.x + CONTENT.width <= WA1.x + WA1.width && r.y + CONTENT.height <= WA1.y + WA1.height;
+
+  // ① 先复现票面点名的读数（改前口径），复现不了就说明这条判据没接上现场
+  const leftClick = walk.computeWalkTarget({ x: 56, y: 134 }, WA1, CONTENT);
+  check('左边缘点击 56,134 → 内容矩形钳到 workArea.x=0（内容本身没出屏）', leftClick, { x: 0, y: 54 });
+  check('复现装机日志「窗口 -300,-386」（2026-10-27T06:14:19.409Z 逐字对上）',
+    walk.contentToOrigin(leftClick, CONST_WIN, CONTENT), { x: -300, y: -386 });
+  check('改前口径的真实内容位 = 意图 +5px（5px 出屏量的来源）',
+    contentOf(walk.contentToOrigin(leftClick, CONST_WIN, CONTENT), REAL_WIN), { x: 5, y: 59 });
+
+  // ② 贴右/下缘才是真缺陷：常量口径把可见内容顶出工作区
+  const corner = walk.computeWalkTarget({ x: 2555, y: 1395 }, WA1, CONTENT);
+  check('右/下缘点击 2555,1395 → 内容钳到 maxX/maxY', corner, { x: 2260, y: 1240 });
+  check('U-d 改前（常量 600）：真实内容完整落在工作区 == false（右缘 2565／下缘 1405 各超 5px）',
+    fits(contentOf(walk.contentToOrigin(corner, CONST_WIN, CONTENT), REAL_WIN)), false);
+  check('U-d 改后（真实 605）：内容完整落在工作区 == true',
+    fits(contentOf(walk.contentToOrigin(corner, REAL_WIN, CONTENT), REAL_WIN)), true);
+  check('改后贴右缘原点 1955,795（改前是 1960,800——正是那 5px）',
+    walk.contentToOrigin(corner, REAL_WIN, CONTENT), { x: 1955, y: 795 });
+  check('改后左缘原点 -305,-391（日志里从此是 -305 而不是 -300）',
+    walk.contentToOrigin(leftClick, REAL_WIN, CONTENT), { x: -305, y: -391 });
+  check('改后不变量：真实内容矩形恒等于钳制后的内容矩形（三面都不漂）',
+    contentOf(walk.contentToOrigin(leftClick, REAL_WIN, CONTENT), REAL_WIN), leftClick);
+
+  // ③ 负坐标副屏同口径（本票范围外多屏，但内收量的算术必须与屏无关）
+  const WA2 = { x: -1920, y: 0, width: 1920, height: 1040 };
+  const subLeft = walk.computeWalkTarget({ x: -1900, y: 100 }, WA2, CONTENT);
+  check('副屏左缘：内容钳到 workArea.x=-1920，改后原点 -2225,-425（= 内容 - 真实内收量 305/445）',
+    walk.contentToOrigin(subLeft, REAL_WIN, CONTENT), { x: -2225, y: -425 });
+
+  // ④ main.js 接线（按 walkPetTo 函数体定界；全局 includes 必绿——contentSize 在 main.js 里本来就有）
+  const mainPath = path.join(root, 'main.js');
+  if (!fs.existsSync(mainPath)) blocked(`${mainPath} 不存在——接线断言读不到源码不许打绿灯`);
+  const mainSrc = fs.readFileSync(mainPath, 'utf8').replace(/\r/g, '');
+  const body = extractFn(mainSrc, 'walkPetTo');
+  if (!body) blocked('walkPetTo 提取失败——函数被改名/删除时接线断言不许空集恒绿');
+  check('接线：walkPetTo 体内取真实窗口矩形（const b = petWindow.getBounds()）',
+    /const b = petWindow\.getBounds\(\);/.test(body), true);
+  check('接线：落点走 walk.contentToOrigin(to, b, size)（把 b 换成常量就红）',
+    /walk\.contentToOrigin\(\s*to,\s*b,\s*size\s*\)/.test(body), true);
+  check('接线：体内不再用常量内收量 petContentOffset（U-d 改前形态的落点）',
+    /petContentOffset\(/.test(body), false);
+  check('正向对照：钳制仍按内容矩形 contentSize（不许退回整窗 600 口径——1.0.64 的收紧）',
+    /contentSize\(/.test(body), true);
+}
 
 console.log(`\n${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

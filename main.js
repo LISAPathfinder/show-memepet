@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, screen, shell, Tray } = require('electron');
-const { spawn, execFile } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
 const { pathToFileURL } = require('url');
 const fs = require('fs');
 const path = require('path');
@@ -1160,6 +1160,10 @@ function runDeferredPositionCheck(why) {
 // 为什么必须带修饰键：三击在编辑器/浏览器里是系统标准的「选段」操作，游戏里也常是连点，
 // 无修饰键的三击会把桌宠弄到选中内容上面，误触代价（挡住刚选中的东西）远大于收益。
 const tripleClick = walk.createTripleClickDetector();
+// 三击「没成」的留痕（票 14-U 任务 A）：限流由 walk.createGestureTrace 自己保证——一次手势最多一行。
+// 为什么需要它：真人报「约 30 次只成 9 次」时，21 次丢弃在日志里一行都不留，三条静默出口
+// （clicks≠3 / Ctrl 掉一拍 / 点在桌宠身上）互斥性无法区分，归因只能编机理链。
+const gestureTrace = walk.createGestureTrace({ log: logLine });
 
 let walkTimer = null;
 let walkPlan = null; // { from, to, direction, startedAt, durationMs, frames }
@@ -1182,30 +1186,44 @@ function onGlobalMouseDown(which, detail) {
     if (inBox) notePetInteraction();
     // 点在互动范围外 = 上一次互动已经结束（系统钩子不发 mouseup，只能这样兜底清掉「按着」状态）
     else petPressing = false;
-    const inWindow = dip.x >= b.x && dip.x <= b.x + b.width && dip.y >= b.y && dip.y <= b.y + b.height;
+    // 票 14-V：判「点在宠物上」必须用互动盒（与穿透/摸头同一口径），不能用整个 600×600 窗矩形——
+    // 窗口绝大部分是透明的，按窗矩形判会把视觉上在桌面的点击整串作废（真人复测 30% 命中率的真因）。
+    const inWindow = inBox;
     if (inWindow) {
       // 点在桌宠自己身上：不触发走过去（继续走原有的连点/摸头逻辑）
       tripleClick.reset();
+      // 带 Ctrl 就是手势意图，这一击必须留痕——本分支在 push() 之前就 return，串永远凑不到
+      // drop() 默认的「≥2 击」门槛，真人定向组实测「4 下点宠身 ⇒ 日志 0 行」就是这么来的（票 14-U 复测轮）。
+      // 不带 Ctrl 的正常摸头既不记账也不成行，否则两下点桌宠就会刷日志（防噪初衷不变）。
+      if (detail.ctrl) gestureTrace.note(detail.clicks, 1);
+      gestureTrace.drop(walk.MISS_REASONS.IN_WINDOW, detail.ctrl);
       return;
     }
   }
   if (which !== 'left') return;
   if (!config.get('walkByTripleClick')) {
     tripleClick.reset();
+    gestureTrace.clear(); // 功能关着：不留痕也不记账，否则每一下都攒一串
     return;
   }
   if (!detail.ctrl) {
     // 不带修饰键的点击不参与累加，否则「普通两击 + Ctrl 一击」会凑成三击
     tripleClick.reset();
+    // 这一击本身也要进账：它是「三下里有一下 ctrl 没被认到」这条候选唯一的分辨依据（票 14-U）
+    gestureTrace.note(detail.clicks, 0);
+    gestureTrace.drop(walk.MISS_REASONS.CTRL_DROP);
     return;
   }
+  gestureTrace.note(detail.clicks, 1);
   if (!tripleClick.push({ x: dip.x, y: dip.y, clicks: detail.clicks })) {
     // 手势成立但被冷却挡住：记一行，免得事后分不清「没识别到」和「被冷却吃了」
     if (tripleClick.lastSuppressed) {
       logLine(`移动跳过: 距上次触发仅 ${tripleClick.lastGapMs}ms，仍在冷却内`);
     }
+    gestureTrace.take(tripleClick.lastReason);
     return;
   }
+  gestureTrace.fired();
   walkPetTo(dip);
 }
 
@@ -1247,10 +1265,13 @@ function walkPetTo(dip) {
   const s = petScale();
   const size = contentSize(s);
   const to = walk.computeWalkTarget(dip, wa, size); // 内容左上角
-  const off = petContentOffset(s);
   const b = petWindow.getBounds();
   const from = { x: b.x, y: b.y };
-  const originTo = { x: to.x - off.x, y: to.y - off.y };
+  // 内收量按**真实窗口尺寸**算（票 14-U 任务 B，与票 14-B 的 clampPetOriginToWorkArea 同口径）：
+  // 常量模型的名义 600 在本机 113% 下回读 605（PITFALLS §105），按 600 推内收量少算 5px——
+  // 装机日志里贴右/下缘的落点因此把可见内容顶出工作区 5px（贴左缘那个「窗口 -300」数值是对的，
+  // 错的是它背后的 300 比真实内收量 305 少 5）。
+  const originTo = walk.contentToOrigin(to, b, size);
   const plan = walk.planWalk(from, originTo);
 
   if (plan.distance < 2) {
@@ -2176,28 +2197,49 @@ function refreshStartupApprovedState(cb) {
   });
 }
 
-// AUMID 显示名注册（票 11-F 裁决③）：通知中心的归属名来自
+// AUMID 显示名注册（票 11-F 裁决③；措辞与调用时序见票 14-S）：通知中心的归属名来自
 // HKCU\Software\Classes\AppUserModelId\<AUMID>\DisplayName——electron-builder 只把 AUMID
 // 写进快捷方式属性、不注册显示名（§66 补注），无此键时 toast 实测回退显示「Electron」。
 // 幂等探测：键在则不写（不每次启动碰注册表）；卸载自动清（uninstaller.nsh 的
 // UninstAppUserModelId 清的就是本键，键名 = build.appId，§66 补注）。
+// ⚠ **同步 execFileSync 是顺序不变量的载体，不是风格选择（票 14-S 任务 2）**：shell 在某个 AUMID 的
+//   **第一条**通知落地时就解析并缓存归属名，此后补写键不会回头改（探针实测三档：先写键再发 ⇒ 组头显示
+//   DisplayName；不写键 ⇒ 裸 AUMID；先发再写 ⇒ 永久停在裸 AUMID）。不变量＝**DisplayName 必须早于该
+//   AUMID 的首条通知写入**。旧版异步 execFile 把这条交给时序巧合（启动毫秒级完成 vs 通知最早几十分钟后
+//   经定时器首发）——现状没出事，但没有任何东西守着它。本函数同步返回时写入已完成，之后 bootApp 才走到
+//   restartReminder（全文唯一通知点所在链）；判据件 tools/verify-toast-aumid-order.js 锁这条顺序与同步性。
+// ⚠ **本函数只判注册表写入，判不了显示名（票 14-S 任务 1）**：归属名没有任何自动判据面——
+//   ToastNotifier.Setting 经 PS 5.1 投影读回空串、History.GetNotifications() 抛空引用（同轮探针实测）。
+//   旧措辞「通知归属名生效」把「写入成功」当成「归属名生效」，而这两件事实测可以不一致，出事时看不出来；
+//   现改三态可区分（键已在／本次已写入／写入失败）且每次启动都落一行，末尾固定一句「无自动判据面」。
+// 启动阻塞代价（本机实测：node v24 直调 execFileSync 各 10 轮）：键已在 query p50 15.4/max 18.1 ms；
+// 需补写时 query+add 串行 p50 30.1/max 32.1 ms。实际值随每次启动落进下面那行日志。
 function ensureAumidDisplayName() {
   if (!app.isPackaged) return;
   const key = 'HKCU\\Software\\Classes\\AppUserModelId\\' + identity.APP_ID;
-  execFile('reg', ['query', key], { windowsHide: true }, (qErr) => {
-    if (!qErr) return; // 键已在（此前启动写过），不重复写
-    execFile(
-      'reg',
-      ['add', key, '/v', 'DisplayName', '/d', identity.PRODUCT_NAME, '/t', 'REG_SZ', '/f'],
-      { windowsHide: true },
-      (aErr) =>
-        logLine(
-          aErr
-            ? `AUMID 显示名注册失败: ${aErr.message}`
-            : `已注册 AUMID 显示名（${identity.APP_ID} → ${identity.PRODUCT_NAME}），通知归属名生效`
-        )
-    );
-  });
+  const t0 = process.hrtime.bigint();
+  let state;
+  try {
+    execFileSync('reg', ['query', key], { windowsHide: true });
+    state = '键已在（本次未写）';
+  } catch (qErr) {
+    // reg.exe 对「键不存在」也返回 1（§77），落到这里既可能是键真的不在、也可能是 query 自身失败——
+    // 两种都继续补写（写入成功即键在位），与旧版「qErr 就 add」的语义一致；真实失败由下一段如实报出。
+    try {
+      execFileSync(
+        'reg',
+        ['add', key, '/v', 'DisplayName', '/d', identity.PRODUCT_NAME, '/t', 'REG_SZ', '/f'],
+        { windowsHide: true }
+      );
+      state = `本次已写入（${key} → ${identity.PRODUCT_NAME}）`;
+    } catch (aErr) {
+      state = `写入失败: ${aErr.message}`;
+    }
+  }
+  logLine(
+    `AUMID 归属名注册：${state}｜耗时 ${(Number(process.hrtime.bigint() - t0) / 1e6).toFixed(1)}ms｜` +
+      '归属名无自动判据面（Setting 读回空串／History 抛空引用），本行只判注册表写入，不判通知中心显示名'
+  );
 }
 
 // 自启新键读回的三态描述（票 11-D 任务 1b）。11-C 的复查用裸 getLoginItemSettings() 当判据，
@@ -2345,6 +2387,9 @@ function bootApp() {
   // ⑤旧 AUMID 键清理段，2026-10-06）——留下的只有 ensureAutostartIntent 的意图补齐这一半。
   ensureAutostartIntent();
   // ③ AUMID 显示名注册（票 11-F 裁决③）：无此键时通知中心归属回退显示框架名（实测 Electron）。
+  // ⚠ 位置是约束不是习惯（票 14-S 任务 2）：本行同步完成写入，必须早于下方任何能发通知的调用点
+  //   （现算＝restartReminder 那一条，通知体在它回调里）。shell 在首条通知时就锁定归属名，挪到之后
+  //   补写不回头改。判据 tools/verify-toast-aumid-order.js 按 bootApp 体内的行序锁这一条。
   ensureAumidDisplayName();
   // ② 开机自启且配置了提权 → 请求提权（relaunchAsAdmin 内部处理 UAC 取消：普通实例
   // 不退出，桌宠降级为普通权限继续跑）。手动启动（无 --autostart）永不触发。

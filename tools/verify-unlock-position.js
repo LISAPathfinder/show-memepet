@@ -549,8 +549,13 @@ console.log('场景 14：摆放三路接线（票 11-N）——walkPetTo / fleeF
         ? `缺[${missing.join(' ')}] 现[${forbidden.join(' ')}]`
         : '体内双向通过');
   }
+  // 1a 的必需串跟到票 14-U 为止：走过去通道的内收量已从常量模型 `petContentOffset(s)` 换成
+  // **真实窗口尺寸**派生（`walk.contentToOrigin(to, b, size)`，本机 605 vs 名义 600 差 5px）。
+  // 本场景的职责没变——「按内容矩形算、不许退回视觉矩形」，所以正向对照换成新接线的三条串；
+  // 「内收量到底按不按真实窗算」这条新判据的牙齿在 verify-walk（票 14-U 任务 B，含 U-d 改前红法），
+  // 这里不重复下针。fleeFromCursor（1b）仍用常量内收量：它只用于**规划**让开方向，落点走 1a 那条。
   wiringAssert(WIRING[0].body,
-    ['contentSize(s)', 'petContentOffset(s)', 'computeWalkTarget(dip, wa, size)'],
+    ['contentSize(s)', 'computeWalkTarget(dip, wa, size)', 'walk.contentToOrigin(to, b, size)'],
     VIS_BAN, '1a walkPetTo 走过去落点按内容矩形算（函数体双向断言）');
   wiringAssert(WIRING[1].body,
     ['contentSize(s)', 'petContentOffset(s)', 'planFlee(contentTL, cursor, wa, size)'],
